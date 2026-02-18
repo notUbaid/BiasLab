@@ -1,134 +1,83 @@
-\# BiasLab – Cognitive Bias Simulation Engine
+# BiasLab – Adaptive Decision Intelligence
 
+## Project Overview
 
+BiasLab is a Python GUI app for analyzing **real-life decisions** (small to major) and identifying whether your current leaning is:
 
-\## Project Overview
+- practically justified, or
+- being distorted by pressure and bias.
 
+It is designed for college-level Python with basic-to-moderate concepts while still giving deep, practical output.
 
+## How BiasLab Works
 
-BiasLab is a Python-based simulation system that models how cognitive biases influence human decision-making.
+BiasLab adapts its questions based on your decision text and your previous answers. It only asks what is necessary, and then explains what is likely going on in plain language.
 
+BiasLab evaluates two options in parallel:
 
+1. **Option strength** (usefulness, long-term fit, evidence, compatibility, tradeoff)
+2. **Pressure signals** (emotion, urgency, social pressure, sunk cost, identity attachment, loss aversion, novelty pull)
 
-Beliefs are represented as probability values between 0 and 1. The system simulates how exposure to different psychological biases causes belief drift over time.
+It then combines these with fairness and foresight checks to compute:
 
+- Bias risk
+- Clarity score
+- Gap between options
 
+### Important Practical Rule
 
-The project compares a Rational Model with a Biased Model to measure distortion effects.
+A preference is **not** flagged as unfair bias if there is strong practical support.
 
+Example: choosing iPhone because of ecosystem compatibility with your existing Apple devices can be treated as a valid practical reason when evidence and need-fit are also strong.
 
+## Features
 
----
+- Adaptive, one-question-at-a-time wizard
+- Works for purchase, relationship, career, finance, academic, health, social, and generic dilemmas
+- Auto-detects options if you write “X or Y” in the decision
+- Bias-type detection with simple action steps
+- Plain-language report and decision radar
+- Session logging to `biaslab_sessions.csv`
 
+## Technologies Used
 
+- Python 3
+- Tkinter
+- Matplotlib
+- NumPy
+- CSV / Datetime / OS modules
 
-\## Cognitive Biases Modeled
+## How to Run
 
+1. Install dependencies:
 
+	```bash
+	pip install matplotlib numpy
+	```
 
-1\. Confirmation Bias – Individuals strengthen existing beliefs.
+2. Run the app:
 
-2\. Anchoring Bias – Initial information strongly influences future decisions.
+	```bash
+	python biaslab.py
+	```
 
-3\. Availability Bias – Recent emotional events distort perception.
+3. Enter your decision, define Option A and Option B (or let BiasLab infer them), and answer the prompts one by one.
 
-4\. Social Influence – Individuals adjust beliefs toward population average.
+## Output
 
+- In-app decision report with bias types and next steps
+- Radar chart of plain-language pressure signals
+- `biaslab_sessions.csv` with each session's metrics
 
+## Privacy and Safety
 
----
+- BiasLab saves sessions locally to `biaslab_sessions.csv`.
+- It does not send any data anywhere.
+- This tool is for decision support only, not professional medical/legal/financial advice.
 
+## Academic Purpose
 
-
-\## Features
-
-
-
-\- Multi-agent simulation
-
-\- Adjustable bias strengths
-
-\- Statistical analysis (mean \& standard deviation)
-
-\- Belief drift measurement
-
-\- CSV export of simulation results
-
-\- Graphical visualization using Matplotlib
-
-
-
----
-
-
-
-\## Technologies Used
-
-
-
-\- Python 3
-
-\- Matplotlib
-
-\- Statistics module
-
-\- CSV module
-
-
-
----
-
-
-
-\## How to Run
-
-
-
-1\. Install matplotlib:
-
-
-
-&nbsp;  pip install matplotlib
-
-
-
-2\. Run the program:
-
-
-
-&nbsp;  python biaslab.py
-
-
-
-3\. Enter simulation parameters when prompted.
-
-
-
----
-
-
-
-\## Output
-
-
-
-\- Console metrics
-
-\- Graph showing belief drift
-
-\- results.csv file containing structured simulation data
-
-
-
----
-
-
-
-\## Academic Purpose
-
-
-
-This project demonstrates how probabilistic modeling and simulation techniques can be used to computationally analyze cognitive bias effects in decision-making systems.
+This project demonstrates applied decision modeling with psychology-informed heuristics, weighted scoring, and practical explainability using foundational Python concepts.
 
 
 
