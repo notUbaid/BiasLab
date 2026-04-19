@@ -1,1411 +1,1662 @@
+"""
+BiasLab - Media Bias Radar (v2, Production Edition)
+====================================================
+
+A Python GUI that analyzes a news article and tells you - in a few seconds -
+whether you are reading plain reporting or language designed to push your
+buttons.  It scores the article on six dimensions, draws a Bias Radar,
+highlights the words that swayed the score, and explains every number.
+
+WHAT'S NEW IN v2
+----------------
+    * Smooth hyperbolic scoring   -> numbers now spread naturally across
+                                      0-100 instead of saturating to 0 or 100.
+    * Multi-factor signals        -> every axis now uses 2-4 sub-signals
+                                      (density, exclamations, ALL-CAPS,
+                                      hedging, superlatives, quotes, etc.).
+    * Confidence score            -> tells you how much to trust the result
+                                      based on article length.
+    * Clickbait Gap metric        -> compares drama in the headline vs. body.
+    * Longer, curated lexicons    -> better coverage on real, long articles.
+    * Sub-factor breakdown in UI  -> every score is explainable step-by-step.
+    * Larger dark UI, readable
+      stats panel, richer radar   -> demo-ready.
+
+SIX RADAR DIMENSIONS (each 0-100, higher = more biased)
+-------------------------------------------------------
+    1. Loaded Language        - dramatic vocabulary + exclamations + ALL-CAPS
+    2. Sentiment Imbalance    - lopsided positive vs. negative tone
+    3. Subjectivity           - absolute/opinion markers, minus hedging
+    4. Source Opacity         - unnamed "sources say" vs. named citations
+    5. Sensational Framing    - dramatic verbs + superlatives
+    6. Political Slant        - ideologically loaded vocabulary density
+
+EXTRA SIGNALS (shown alongside the radar)
+-----------------------------------------
+    * Political Lean      : -1.0 (far left) ... +1.0 (far right)
+    * Clickbait Gap       : 0-100 (headline drama minus body drama)
+    * Confidence          : 0-1 (how reliable this analysis is)
+    * Article Stats       : paragraphs, ! ? count, ALL-CAPS, quoted speech
+
+FILE MAP
+--------
+    Section 1 : Imports
+    Section 2 : Configuration - lexicons, thresholds, constants
+    Section 3 : Helpers - text preprocessing and math utilities
+    Section 4 : Metric functions - one per bias dimension (+ clickbait, confidence)
+    Section 5 : Aggregator - one call that returns the full report
+    Section 6 : Verdicts + suggestions
+    Section 7 : CSV session logging
+    Section 8 : Tkinter GUI class
+    Section 9 : Built-in demo article (for instant class demos)
+    Section 10: main() entry point
+
+HOW TO RUN
+----------
+    pip install matplotlib
+    python biaslab.py
+
+AUTHOR
+------
+    Ubaid  -  class project, version 2.0
+"""
+
+# ==========================================================
+# SECTION 1: IMPORTS
+# ==========================================================
+# We only use the Python standard library + matplotlib.
+
 import csv
-import datetime
 import os
 import re
 import tkinter as tk
-from tkinter import ttk
+from datetime import datetime
+from math import pi
+from tkinter import ttk, messagebox, scrolledtext
 
 import matplotlib.pyplot as plt
-import numpy as np
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+from matplotlib.figure import Figure
 
 
 # ==========================================================
-# SECTION 1: SHARED CONFIGURATION (KEYS, WEIGHTS, LABELS)
+# SECTION 2: CONFIGURATION - LEXICONS, HALF-POINTS, CONSTANTS
 # ==========================================================
+# Everything that tunes the analyzer lives in this section so you
+# (or your teacher) can experiment without touching the logic.
 
-CONTEXT_KEYWORDS = {
-    "purchase": [
-        "buy",
-        "price",
-        "cost",
-        "deal",
-        "discount",
-        "sale",
-        "order",
-        "purchase",
-        "shop",
-        "shopping",
-        "product",
-        "item",
-        "phone",
-        "laptop",
-        "tablet",
-        "headphone",
-        "earbuds",
-        "camera",
-        "car",
-        "bike",
-        "scooter",
-        "house",
-        "apartment",
-        "rent",
-    ],
-    "relationship": [
-        "date",
-        "dating",
-        "relationship",
-        "partner",
-        "boyfriend",
-        "girlfriend",
-        "crush",
-        "love",
-        "like",
-        "approach",
-        "confess",
-        "ask out",
-        "proposal",
-        "marry",
-        "marriage",
-        "breakup",
-        "divorce",
-        "commit",
-        "commitment",
-        "situationship",
-    ],
-    "career": [
-        "job",
-        "career",
-        "work",
-        "internship",
-        "promotion",
-        "resign",
-        "quit",
-        "switch",
-        "role",
-        "company",
-        "startup",
-        "business",
-        "degree",
-        "masters",
-        "mba",
-    ],
-    "finance": [
-        "money",
-        "budget",
-        "save",
-        "saving",
-        "invest",
-        "investment",
-        "stock",
-        "crypto",
-        "fund",
-        "loan",
-        "emi",
-        "rent",
-        "debt",
-        "credit",
-        "interest",
-    ],
-    "academic": [
-        "exam",
-        "study",
-        "college",
-        "school",
-        "course",
-        "major",
-        "minor",
-        "university",
-        "gpa",
-        "assignment",
-        "project",
-        "thesis",
-        "research",
-    ],
-    "health": [
-        "health",
-        "diet",
-        "sleep",
-        "workout",
-        "exercise",
-        "gym",
-        "doctor",
-        "therapy",
-        "mental",
-        "stress",
-        "anxiety",
-        "medicine",
-        "treatment",
-    ],
-    "social": [
-        "friend",
-        "friends",
-        "party",
-        "group",
-        "hangout",
-        "meet",
-        "text",
-        "call",
-        "message",
-        "event",
-        "invite",
-        "invite",
-        "social",
-    ],
-}
+APP_VERSION = "2.0"
+CSV_FILENAME = "biaslab_sessions.csv"
 
-MAJOR_DECISION_KEYWORDS = [
-    "marry",
-    "marriage",
-    "breakup",
-    "divorce",
-    "career",
-    "job",
-    "degree",
-    "business",
-    "house",
-    "loan",
-    "move",
-    "relocate",
-    "commit",
-    "commitment",
-    "investment",
-    "proposal",
-    "mortgage",
-    "visa",
-    "abroad",
-    "relocation",
-    "surgery",
-    "diagnosis",
-    "treatment",
-    "insurance",
+# ----------------------------------------------------------
+# 2A. LEXICONS
+# ----------------------------------------------------------
+# A "lexicon" is just a list of phrases we treat as signals.  Lists
+# are curated to be compact, educational, and easy to extend.  A
+# production-grade media bias detector would pair these with a much
+# larger corpus, but the ALGORITHM is identical.
+
+# --- 1. Sensational / dramatic vocabulary --------------------------
+# High-drama words.  If an article leans on these, it is trying to
+# *feel* important instead of letting facts speak.
+SENSATIONAL_WORDS = [
+    "shocking", "shocked", "devastating", "devastated", "explosive",
+    "bombshell", "outrageous", "outraged", "disgusting", "disgusted",
+    "horrifying", "horrific", "terrifying", "terrified",
+    "catastrophe", "catastrophic", "crisis", "chaos", "chaotic",
+    "furious", "enraged", "tragic", "tragedy", "nightmare", "meltdown",
+    "scandal", "scandalous", "disaster", "disastrous",
+    "stunning", "jaw-dropping", "unbelievable", "unthinkable", "alarming",
+    "apocalyptic", "unprecedented", "staggering", "horrendous",
+    "heartbreaking", "gut-wrenching", "ferocious", "blistering",
+    "damning", "scathing", "seethe", "seething",
 ]
 
-SMALL_DECISION_KEYWORDS = [
-    "ice cream",
-    "snack",
-    "food",
-    "drink",
-    "movie",
-    "shirt",
-    "weekend",
-    "today",
-    "tonight",
-    "coffee",
-    "tea",
-    "dessert",
-    "game",
-    "music",
-    "playlist",
-    "meme",
-    "post",
-    "reply",
-    "text back",
-    "call back",
-    "outfit",
-    "order food",
+# --- 2. Absolute / opinion markers ---------------------------------
+# Phrases that *tell* you how to feel without evidence.
+ABSOLUTE_WORDS = [
+    "obviously", "clearly", "undeniably", "without question",
+    "everyone knows", "nobody denies", "of course", "naturally",
+    "evidently", "surely", "certainly", "undoubtedly", "definitely",
+    "plainly", "absolutely", "needless to say", "make no mistake",
+    "it is clear", "it's clear", "it goes without saying",
+    "beyond doubt", "beyond any doubt", "there is no question",
+    "anyone can see", "any reasonable person", "the fact is",
+    "the simple truth", "no one in their right mind",
 ]
 
-OPTION_CRITERIA_KEYS = ["need_fit", "long_term", "tradeoff", "evidence", "compatibility"]
+# --- 3. Hedge markers (appropriate journalism uses these) ----------
+# Hedges do the OPPOSITE of absolutes - they flag uncertainty.
+# Articles with hedges are more careful, so we reduce subjectivity
+# when these appear.
+HEDGE_WORDS = [
+    "may", "might", "could", "appears", "appeared", "seems", "seemed",
+    "likely", "possibly", "perhaps", "apparently", "suggests",
+    "suggest", "indicates", "indicate", "roughly", "approximately",
+    "around", "nearly", "in part", "to some extent", "is believed to",
+    "estimates", "preliminary", "tentative",
+]
 
-RATIONAL_WEIGHTS = {
-    "evidence": 0.35,
-    "need_fit": 0.20,
-    "long_term": 0.20,
-    "compatibility": 0.15,
-    "tradeoff": 0.10,
-}
+# --- 4. Sentiment vocabulary --------------------------------------
+POSITIVE_WORDS = [
+    "success", "successful", "successfully", "triumph", "triumphant",
+    "victory", "victorious", "breakthrough", "hopeful", "hope",
+    "thriving", "thrive", "brilliant", "excellent", "wonderful", "great",
+    "positive", "positively", "progress", "progressing", "achievement",
+    "achieved", "innovative", "inspiring", "inspired", "praise",
+    "praised", "celebrated", "celebrating", "landmark", "historic",
+    "milestone", "boost", "boosted", "soar", "soared", "surge", "surged",
+    "rally", "rallied", "gains", "welcomed", "applauded",
+]
 
-DISTORTION_WEIGHTS = {
-    "bias_pressure": 0.40,
-    "foresight_gap": 0.20,
-    "fairness_risk": 0.15,
-    "weak_choice_penalty": 0.15,
-    "low_evidence_penalty": 0.10,
-}
+NEGATIVE_WORDS = [
+    "failure", "failed", "fail", "defeat", "defeated", "plunge",
+    "plunged", "crumble", "crumbled", "broken", "break", "breaks",
+    "dangerous", "danger", "threat", "threatening", "threatened", "fear",
+    "feared", "worry", "worried", "concern", "concerned", "worst",
+    "terrible", "awful", "weak", "weakened", "damage", "damaged",
+    "harmed", "harm", "hurt", "collapse", "collapsed", "ruined", "ruin",
+    "criticized", "condemn", "condemned", "slump", "slumped", "fell",
+    "dropped", "decline", "declining", "plummet", "plummeted",
+    "blasted", "scorned", "rejected",
+]
 
-BIAS_PRESSURE_KEYS = [
-    "emotion",
-    "urgency",
-    "social_pressure",
-    "sunk_cost",
-    "identity_attachment",
-    "loss_aversion",
-    "novelty_pull",
+# --- 5. Political slant vocabulary ---------------------------------
+# These are words that tend to appear disproportionately in outlets
+# leaning one way or the other.  We do NOT claim either side is
+# "right" - we just measure how heavily the piece is signalling.
+LEFT_LOADED = [
+    "progressive", "equity", "marginalized", "systemic",
+    "far-right", "far right", "white supremacist", "xenophobic",
+    "climate crisis", "reproductive rights", "wealth gap",
+    "corporate greed", "anti-worker", "science denier",
+    "income inequality", "living wage", "union-busting",
+    "climate denier", "disenfranchised",
+    "structural racism", "late-stage capitalism", "dog whistle",
+]
+
+RIGHT_LOADED = [
+    "woke", "liberal elite", "mainstream media", "illegal aliens",
+    "radical left", "socialist", "communist", "globalist",
+    "patriot", "patriotic", "traditional values", "law and order",
+    "entitlement", "welfare state", "big government",
+    "open borders", "cancel culture", "lamestream",
+    "job creator", "family values", "silent majority", "real americans",
+    "career politician", "deep state",
+]
+
+# --- 6. Dramatic / us-vs-them framing words ------------------------
+FRAMING_WORDS = [
+    "slammed", "attacked", "blasted", "ripped", "lashed out",
+    "tore into", "unloaded on", "savaged", "pounced",
+    "enemy", "enemies", "traitor", "hero", "heroic", "coward",
+    "regime", "crackdown", "mob", "radicals", "thugs", "puppet",
+    "warmonger", "puppet master", "witch hunt", "kangaroo court",
+    "clash", "clashed", "showdown", "stormed",
+]
+
+# --- 7. Superlatives / "one of a kind" claims ----------------------
+SUPERLATIVES = [
+    "worst", "best", "greatest", "biggest", "largest", "smallest",
+    "unprecedented", "historic", "record-breaking", "record-high",
+    "record-low", "first-ever", "never before", "most",
+    "absolute worst", "absolute best", "all-time low", "all-time high",
+    "biggest ever", "largest ever",
+]
+
+# --- 8. Named-source citation signals ------------------------------
+CITATION_SIGNALS = [
+    "according to", "said", "stated", "reported", "noted",
+    "announced", "confirmed", "told reporters", "press release",
+    "in a statement", "testified", "wrote in", "writes in",
+    "explained", "acknowledged", "admitted", "testified before",
+    "documents show", "court records",
+]
+
+# --- 9. Weasel / unnamed-source signals ----------------------------
+WEASEL_SIGNALS = [
+    "sources say", "sources said", "experts say", "experts believe",
+    "critics claim", "it's rumored", "many believe", "some argue",
+    "reportedly", "allegedly", "it is believed", "people are saying",
+    "insiders say", "observers note", "anonymous sources",
+    "familiar with the matter", "those in the know",
+    "industry watchers", "some say", "certain people",
 ]
 
 
-def normalize(value):
-    return max(0.0, min(1.0, value / 10.0))
+# ----------------------------------------------------------
+# 2B. SCORING TUNING PARAMETERS (HALF-POINTS)
+# ----------------------------------------------------------
+# The "half-point" is the signal value at which an axis scores
+# exactly 50 / 100.  Smaller half-point = a little signal goes a
+# long way.  Bigger half-point = the signal must be very strong to
+# move the needle.  These numbers were tuned by running the analyzer
+# on a small corpus of neutral and biased articles.
+
+HALF_SENSATIONAL    = 12.0   # per 1000 words
+HALF_ABSOLUTE       =  8.0
+HALF_FRAMING        = 12.0
+HALF_SLANT          = 18.0
+HALF_WEASEL         =  6.0
+HALF_EXCLAIM        =  5.0
+HALF_CAPS           =  3.0
+HALF_SUPERLATIVE    =  6.0
+HALF_CLICKBAIT_GAP  = 40.0   # title_drama - body_drama
+HALF_CONFIDENCE     = 200.0  # word count
+
+# ----------------------------------------------------------
+# 2C. RADAR AXIS LABELS AND VERDICT THRESHOLDS
+# ----------------------------------------------------------
+# The order of RADAR_LABELS must match the order we build the
+# scores list in the aggregator - otherwise the chart rotates.
+RADAR_LABELS = [
+    "Loaded\nLanguage",
+    "Sentiment\nImbalance",
+    "Subjectivity",
+    "Source\nOpacity",
+    "Sensational\nFraming",
+    "Political\nSlant",
+]
+
+# (ceiling, label, explanation) - picked in order; first match wins.
+VERDICT_THRESHOLDS = [
+    (20, "MINIMAL BIAS",  "Reads like fairly neutral reporting."),
+    (40, "MILD BIAS",     "Mostly neutral with some loaded phrasing."),
+    (60, "MODERATE BIAS", "Notable slant - read a second source to balance it."),
+    (80, "STRONG BIAS",   "Heavy slant - treat as opinion, not plain reporting."),
+    (101, "EXTREME BIAS", "Reads like an opinion piece or propaganda."),
+]
 
 
-def clamp01(value):
-    return max(0.0, min(1.0, value))
+# ==========================================================
+# SECTION 3: SMALL TEXT-PROCESSING & MATH HELPERS
+# ==========================================================
+# These tiny functions are the building blocks for every scorer.
+# Each one does exactly one thing so it can be tested and explained
+# in isolation.
+
+def normalize_text(text: str) -> str:
+    """
+    Lower-case and collapse whitespace.  We do NOT strip punctuation
+    here because regex word-boundaries (`\\b`) work better when
+    punctuation is intact.
+    """
+    text = text.lower()
+    text = re.sub(r"\s+", " ", text)
+    return text.strip()
 
 
-def classify_risk(risk_score):
-    if risk_score < 0.30:
-        return "High Decision Integrity"
-    if risk_score < 0.60:
-        return "Balanced but Needs Reflection"
-    return "Elevated Distortion Risk"
+def word_count(text: str) -> int:
+    """
+    How many English-style words are in `text`?
+    We call `re.findall` with the pattern `\\b[a-zA-Z']+\\b` which
+    means: chunks of letters (apostrophes allowed) surrounded by
+    word boundaries.  We use max(count, 1) so we never divide by zero.
+    """
+    words = re.findall(r"\b[a-zA-Z']+\b", text)
+    return max(len(words), 1)
 
 
-class BiasLab:
-    """BiasLab app with clearly separated UI, scoring logic, and report text logic."""
+def count_phrase(text: str, phrase: str) -> int:
+    """
+    Count whole-phrase occurrences (case-insensitive).  Using `\\b`
+    stops us matching 'said' inside 'praised'.  This also works for
+    multi-word phrases because spaces are natural boundaries.
+    """
+    pattern = r"\b" + re.escape(phrase) + r"\b"
+    matches = re.findall(pattern, text, flags=re.IGNORECASE)
+    return len(matches)
 
-    # ======================================================
-    # SECTION 2: APP STATE + APP BOOTSTRAP
-    # ======================================================
 
-    def __init__(self, root):
-        self.root = root
-        self.root.title("BiasLab - Practical Decision Intelligence")
-        self.root.geometry("1120x860")
-        self.root.configure(bg="#f3f5fb")
+def count_many(text: str, phrases: list) -> tuple:
+    """
+    Count how many times ANY phrase from `phrases` appears in `text`.
+    Returns (total_hits, sorted_list_of_phrases_that_actually_matched).
+    The second value drives the "flagged words" panel in the UI.
+    """
+    total = 0
+    found = []
+    for phrase in phrases:
+        hits = count_phrase(text, phrase)
+        if hits > 0:
+            total += hits
+            found.append(phrase)
+    return total, sorted(found)
 
-        self.answers = {}
-        self.signal_map = {}
-        self.option_a_sliders = {}
-        self.option_b_sliders = {}
 
-        self.decision_text = None
-        self.option_a_var = tk.StringVar(value="Option A")
-        self.option_b_var = tk.StringVar(value="Option B")
-        self.leaning_var = tk.StringVar(value="A")
+def density_per_1000(count: int, n_words: int) -> float:
+    """How many hits per 1000 words?  Length-independent."""
+    return (count / n_words) * 1000.0
 
-        self.option_scores = {"A": {}, "B": {}}
-        self.chosen_key = "A"
-        self.other_key = "B"
-        self.chosen_label = "Option A"
-        self.other_label = "Option B"
 
-        self.decision_scale = "standard"
-        self.cognitive_questions = []
-        self.option_questions = []
-        self.current_phase = "cognitive"
-        self.current_index = 0
-        self.current_question = None
-        self.asked_question_ids = set()
-        self.total_steps_estimate = 1
-        self.completed_steps = 0
-        self.detected_biases = []
+def clamp(value: float, low: float = 0.0, high: float = 100.0) -> float:
+    """Keep `value` inside the range [low, high]."""
+    return max(low, min(high, value))
 
-        self.intro()
 
-    # ======================================================
-    # SECTION 3: GENERIC UI HELPERS
-    # ======================================================
+def smooth_score(value: float, half_point: float) -> float:
+    """
+    Convert a non-negative signal into a smooth 0-100 score.
 
-    def clear(self):
-        for widget in self.root.winfo_children():
-            widget.destroy()
+    Formula:   score = 100 * value / (value + half_point)
 
-    # ======================================================
-    # SECTION 4: INPUT + CONTEXT PREP
-    # ======================================================
+    Behaviour:
+        value = 0                  ->   0
+        value = half_point         ->  50
+        value = 3 * half_point     ->  75
+        value = 9 * half_point     ->  90
+        value = infinity           ->  approaches 100 but never reaches
 
-    def detect_context(self, decision_text):
-        """Map free-text decision into one of the supported contexts."""
-        decision_lower = decision_text.lower()
-        for context_name, keywords in CONTEXT_KEYWORDS.items():
-            if any(word in decision_lower for word in keywords):
-                return context_name
-        return "generic"
+    This curve is called a "saturating" or "hyperbolic" curve.  It is
+    the same shape used in the Michaelis-Menten enzyme equation in
+    chemistry, but we use it here to avoid the ugly "always 100"
+    saturation of a linear formula.
+    """
+    if value <= 0:
+        return 0.0
+    return 100.0 * value / (value + half_point)
 
-    def detect_decision_scale(self, decision_text, context):
-        """Detect whether the decision is small, standard, or major using simple keyword rules."""
-        decision_lower = decision_text.lower()
 
-        if context in ["relationship", "career", "finance", "health"]:
-            return "major"
+def count_all_caps_words(raw: str) -> int:
+    """
+    Count shouted words (length >= 4, all uppercase).
+    Length 4+ avoids counting acronyms like USA, NBC, FBI, AI.
+    """
+    return len(re.findall(r"\b[A-Z]{4,}\b", raw))
 
-        if any(word in decision_lower for word in MAJOR_DECISION_KEYWORDS):
-            return "major"
 
-        if any(word in decision_lower for word in SMALL_DECISION_KEYWORDS):
-            return "small"
+def count_quoted_segments(raw: str) -> int:
+    """
+    Count runs of quoted speech ("...." or \u201C....\u201D).  A properly
+    attributed quote is a sign of source transparency.  We only count
+    quotes with at least 4 characters inside to skip stray apostrophes.
+    """
+    count = 0
+    count += len(re.findall(r'"[^"\n]{4,}?"', raw))            # straight
+    count += len(re.findall(r'\u201C[^\u201D\n]{4,}?\u201D', raw))  # curly
+    return count
 
-        return "standard"
 
-    def _infer_options_from_decision(self, decision_text):
-        """Infer options when user writes dilemma as 'X or Y'."""
-        decision_clean = re.sub(r"\s+", " ", decision_text.strip())
-        split_match = re.search(r"\b(.+?)\s+or\s+(.+)$", decision_clean, flags=re.IGNORECASE)
-        if not split_match:
-            return None, None
+def split_paragraphs(body: str) -> list:
+    """Split on blank lines and drop empties.  Used to count paragraphs."""
+    return [p for p in re.split(r"\n\s*\n", body.strip()) if p.strip()]
 
-        left = split_match.group(1)
-        right = split_match.group(2)
 
-        left = re.sub(r"^(should i|do i|is it better to|would it be better to)\s+", "", left, flags=re.IGNORECASE).strip(" ?.,")
-        right = right.strip(" ?.,")
+def gather_article_stats(raw_title: str, raw_body: str, n_words: int) -> dict:
+    """
+    Compute article-wide stats once, so multiple scorers can share
+    them without repeating the same work.
+    """
+    return {
+        "exclamations":    raw_body.count("!") + raw_title.count("!"),
+        "questions":       raw_body.count("?") + raw_title.count("?"),
+        "all_caps_words":  count_all_caps_words(raw_title) + count_all_caps_words(raw_body),
+        "quoted_segments": count_quoted_segments(raw_body),
+        "paragraphs":      len(split_paragraphs(raw_body)),
+        "n_words":         n_words,
+    }
 
-        if not left or not right:
-            return None, None
 
-        return left.capitalize(), right.capitalize()
+def confidence_from_length(n_words: int) -> float:
+    """
+    Confidence (0.0 ... 1.0) in the result, based on article length.
+        ~100 words ->  0.33  (short - treat scores as suggestive)
+        ~300 words ->  0.60  (solid)
+        ~600 words ->  0.75  (reliable)
+       ~1000 words ->  0.83  (high confidence)
+    """
+    return smooth_score(n_words, HALF_CONFIDENCE) / 100.0
 
-    def _identify_dilemma_profile(self, decision_text):
-        """Identify most likely dilemma domain and generate an explainable profile."""
-        text = decision_text.lower()
-        scores = {}
-        for domain, words in CONTEXT_KEYWORDS.items():
-            scores[domain] = sum(1 for word in words if word in text)
 
-        best_domain = max(scores, key=scores.get) if scores else "generic"
-        best_score = scores.get(best_domain, 0)
-        sorted_scores = sorted(scores.values(), reverse=True)
-        second_best = sorted_scores[1] if len(sorted_scores) > 1 else 0
+# ==========================================================
+# SECTION 4: METRIC FUNCTIONS - ONE PER BIAS DIMENSION
+# ==========================================================
+# Each function:
+#   * takes (normalized_text, word_count, stats_dict)
+#   * returns a dict:
+#         {
+#             "score": 0-100 float,
+#             "found": [list of matched phrases for the UI],
+#             "count": int,
+#             "sub":   {named sub-factors used to compute the score},
+#         }
+# The "sub" key is what makes the new version "explainable": every
+# number on screen can be traced back to its inputs.
 
-        if best_score == 0:
-            best_domain = "generic"
-            confidence = "low"
-        elif best_score - second_best >= 2:
-            confidence = "high"
-        else:
-            confidence = "medium"
+def score_loaded_language(text: str, n_words: int, stats: dict) -> dict:
+    """
+    Three signals combined:
+        1. Density of sensational vocabulary.     (weight 0.60)
+        2. Exclamation-mark density.              (weight 0.25)
+        3. ALL-CAPS word density (shouting).      (weight 0.15)
+    """
+    sens_count, sens_found = count_many(text, SENSATIONAL_WORDS)
+    sens_density = density_per_1000(sens_count, n_words)
+    sens_score   = smooth_score(sens_density, HALF_SENSATIONAL)
 
-        scale = self.detect_decision_scale(decision_text, best_domain)
+    excl_density = density_per_1000(stats["exclamations"], n_words)
+    excl_score   = smooth_score(excl_density, HALF_EXCLAIM)
+
+    caps_density = density_per_1000(stats["all_caps_words"], n_words)
+    caps_score   = smooth_score(caps_density, HALF_CAPS)
+
+    score = 0.60 * sens_score + 0.25 * excl_score + 0.15 * caps_score
+
+    return {
+        "score": round(score, 1),
+        "found": sens_found,
+        "count": sens_count,
+        "sub": {
+            "sensational_density_per_1000": round(sens_density, 2),
+            "exclamation_density_per_1000": round(excl_density, 2),
+            "all_caps_density_per_1000":    round(caps_density, 2),
+        },
+    }
+
+
+def score_sentiment_imbalance(text: str, n_words: int, stats: dict) -> dict:
+    """
+    How lopsided is the emotional tone?
+
+    Step 1: count positive and negative words.
+    Step 2: imbalance_ratio = |pos - neg| / (pos + neg).       (0..1)
+    Step 3: confidence = smooth_score(total_density, 30) / 100. (0..1)
+    Step 4: score = imbalance_ratio * confidence * 100.
+
+    The confidence factor stops us screaming "biased!" when an
+    article has only one or two sentiment words in total.
+    """
+    pos, pos_found = count_many(text, POSITIVE_WORDS)
+    neg, neg_found = count_many(text, NEGATIVE_WORDS)
+    total = pos + neg
+
+    if total == 0:
         return {
-            "domain": best_domain,
-            "confidence": confidence,
-            "scale": scale,
-            "summary": f"{best_domain.title()} / {scale.title()}-impact",
+            "score": 0.0, "found": [], "count": 0,
+            "sub": {"positive_hits": 0, "negative_hits": 0,
+                    "imbalance_ratio": 0.0, "confidence": 0.0},
         }
 
-    def _counter_prompt(self):
-        """Clear, concrete wording for opposite-case question."""
-        chosen = self.option_a if self.leaning_var.get() == "A" else self.option_b
-        other = self.option_b if self.leaning_var.get() == "A" else self.option_a
-        prompt = f"How strong is the best case for '{other}' instead of '{chosen}'?"
-        hint = (
-            "0 = almost no case for the other option, 10 = very strong case for the other option"
-        )
-        return prompt, hint
+    imbalance = abs(pos - neg) / total
+    density = density_per_1000(total, n_words)
+    conf = smooth_score(density, 30.0) / 100.0   # 0..1
 
-    def _collect_intro_inputs(self):
-        """Collect the first-screen input values and normalize defaults."""
-        self.decision = self.decision_text.get("1.0", tk.END).strip() or "Undescribed decision"
-        raw_option_a = self.option_a_var.get().strip()
-        raw_option_b = self.option_b_var.get().strip()
+    score = imbalance * conf * 100.0
+    found = pos_found if pos >= neg else neg_found
 
-        inferred_a, inferred_b = self._infer_options_from_decision(self.decision)
-        self.option_a = raw_option_a or inferred_a or "Option A"
-        self.option_b = raw_option_b or inferred_b or "Option B"
+    return {
+        "score": round(score, 1),
+        "found": found,
+        "count": total,
+        "sub": {
+            "positive_hits":     pos,
+            "negative_hits":     neg,
+            "imbalance_ratio":   round(imbalance, 2),
+            "sentiment_density": round(density, 2),
+            "confidence":        round(conf, 2),
+        },
+    }
 
-        self.dilemma_profile = self._identify_dilemma_profile(self.decision)
-        self.context = self.dilemma_profile["domain"]
-        self.decision_scale = self.dilemma_profile["scale"]
 
-    # ======================================================
-    # SECTION 5: SCREEN BUILDERS
-    # ======================================================
+def score_subjectivity(text: str, n_words: int, stats: dict) -> dict:
+    """
+    Absolutes (obviously, clearly) PUSH the score UP.
+    Hedges   (may, might, perhaps) PULL the score DOWN by up to 30
+                                    points - good journalism hedges.
+    """
+    abs_count, abs_found = count_many(text, ABSOLUTE_WORDS)
+    hedge_count, _       = count_many(text, HEDGE_WORDS)
 
-    def intro(self):
-        """First screen: collect decision statement and top-two options."""
-        self.clear()
-        page = tk.Frame(self.root, bg="#f3f5fb")
-        page.pack(fill="both", expand=True, padx=24, pady=18)
+    abs_density   = density_per_1000(abs_count, n_words)
+    hedge_density = density_per_1000(hedge_count, n_words)
 
-        tk.Label(page, text="BiasLab", font=("Segoe UI", 30, "bold"), bg="#f3f5fb", fg="#0f172a").pack(anchor="w")
-        tk.Label(
-            page,
-            text="Adaptive Decision Intelligence",
-            font=("Segoe UI", 12, "bold"),
-            bg="#f3f5fb",
-            fg="#334155",
-        ).pack(anchor="w", pady=(2, 0))
-        tk.Label(
-            page,
-            text="Type your dilemma once. BiasLab will ask questions one-by-one and adapt based on your answers.",
-            font=("Segoe UI", 10),
-            bg="#f3f5fb",
-            fg="#475569",
-        ).pack(anchor="w", pady=(0, 12))
+    abs_score    = smooth_score(abs_density, HALF_ABSOLUTE)
+    hedge_relief = min(30.0, hedge_density * 3.0)
 
-        card = tk.Frame(page, bg="white", highlightbackground="#dbe3f1", highlightthickness=1)
-        card.pack(fill="both", expand=True)
+    score = max(0.0, abs_score - hedge_relief)
 
-        tk.Label(card, text="Decision Description", font=("Segoe UI", 12, "bold"), bg="white", fg="#0f172a").pack(anchor="w", padx=18, pady=(16, 4))
-        tk.Label(
-            card,
-            text="Example: Should I approach my crush now or wait for better timing?",
-            font=("Segoe UI", 9),
-            bg="white",
-            fg="#64748b",
-        ).pack(anchor="w", padx=18, pady=(0, 4))
-        self.decision_text = tk.Text(card, height=6, width=110, bg="#f8fafc", fg="#0f172a")
-        self.decision_text.pack(padx=18, pady=(0, 10))
+    return {
+        "score": round(score, 1),
+        "found": abs_found,
+        "count": abs_count,
+        "sub": {
+            "absolute_density_per_1000": round(abs_density, 2),
+            "hedge_density_per_1000":    round(hedge_density, 2),
+            "hedge_relief_points":       round(hedge_relief, 2),
+        },
+    }
 
-        option_frame = tk.Frame(card, bg="white")
-        option_frame.pack(fill="x", padx=18, pady=(0, 8))
-        tk.Label(option_frame, text="Option A", width=12, anchor="w", bg="white", fg="#1e293b", font=("Segoe UI", 10, "bold")).grid(row=0, column=0, padx=6, pady=5)
-        tk.Entry(option_frame, textvariable=self.option_a_var, width=46, bg="#f8fafc").grid(row=0, column=1, padx=6, pady=5)
-        tk.Label(option_frame, text="Option B", width=12, anchor="w", bg="white", fg="#1e293b", font=("Segoe UI", 10, "bold")).grid(row=1, column=0, padx=6, pady=5)
-        tk.Entry(option_frame, textvariable=self.option_b_var, width=46, bg="#f8fafc").grid(row=1, column=1, padx=6, pady=5)
 
-        leaning_frame = tk.Frame(card, bg="white")
-        leaning_frame.pack(anchor="w", padx=18, pady=(6, 8))
-        tk.Label(leaning_frame, text="Current leaning", bg="white", fg="#1e293b", font=("Segoe UI", 10, "bold")).pack(side="left", padx=(0, 10))
-        ttk.Radiobutton(leaning_frame, text="Option A", variable=self.leaning_var, value="A").pack(side="left", padx=8)
-        ttk.Radiobutton(leaning_frame, text="Option B", variable=self.leaning_var, value="B").pack(side="left", padx=8)
+def score_source_opacity(text: str, n_words: int, stats: dict) -> dict:
+    """
+    Three signals combined:
+        A. Weasel share            = weasel / (weasel + named)     (ratio 0..1)
+        B. Raw weasel density      = weasels per 1000 words
+        C. Quoted-speech presence  (REDUCES opacity, up to 15 pts)
+    """
+    named,  _            = count_many(text, CITATION_SIGNALS)
+    weasel, weasel_found = count_many(text, WEASEL_SIGNALS)
+    total = named + weasel
 
-        tk.Label(
-            card,
-            text="Tip: If you write 'X or Y' in the dilemma text, BiasLab auto-detects both options.",
-            font=("Segoe UI", 9),
-            bg="white",
-            fg="#64748b",
-        ).pack(anchor="w", padx=18, pady=(0, 12))
+    # A. weasel share
+    if total == 0:
+        ratio_score = 50.0   # no citations at all = mildly suspicious
+    else:
+        ratio_score = 100.0 * weasel / total
 
-        tk.Button(
-            card,
-            text="Start Adaptive Analysis",
-            command=self.open_deep_assessment,
+    # B. raw weasel density
+    weasel_density = density_per_1000(weasel, n_words)
+    weasel_score   = smooth_score(weasel_density, HALF_WEASEL)
+
+    # C. quoted-speech relief
+    quote_density = density_per_1000(stats["quoted_segments"], n_words)
+    quote_relief  = min(15.0, quote_density * 5.0)
+
+    score = max(0.0, 0.55 * ratio_score + 0.45 * weasel_score - quote_relief)
+
+    return {
+        "score": round(score, 1),
+        "found": weasel_found,
+        "count": weasel,
+        "sub": {
+            "named_citations":    named,
+            "weasel_citations":   weasel,
+            "quoted_segments":    stats["quoted_segments"],
+            "quote_relief_points": round(quote_relief, 2),
+        },
+    }
+
+
+def score_sensational_framing(text: str, n_words: int, stats: dict) -> dict:
+    """
+    Two signals combined:
+        1. Dramatic verb density ("slammed", "regime", "mob").  (weight 0.70)
+        2. Superlative density   ("worst", "unprecedented").     (weight 0.30)
+    """
+    frame_count, frame_found = count_many(text, FRAMING_WORDS)
+    sup_count,   _           = count_many(text, SUPERLATIVES)
+
+    frame_density = density_per_1000(frame_count, n_words)
+    sup_density   = density_per_1000(sup_count, n_words)
+
+    frame_score = smooth_score(frame_density, HALF_FRAMING)
+    sup_score   = smooth_score(sup_density, HALF_SUPERLATIVE)
+
+    score = 0.70 * frame_score + 0.30 * sup_score
+
+    return {
+        "score": round(score, 1),
+        "found": frame_found,
+        "count": frame_count,
+        "sub": {
+            "framing_density_per_1000":     round(frame_density, 2),
+            "superlative_density_per_1000": round(sup_density, 2),
+        },
+    }
+
+
+def score_political_slant(text: str, n_words: int, stats: dict) -> dict:
+    """
+    Returns BOTH intensity and direction.
+        * Intensity = how loaded the vocabulary is (0-100).
+        * Direction = -1.0 (all left words) ... +1.0 (all right words).
+    """
+    left,  left_found  = count_many(text, LEFT_LOADED)
+    right, right_found = count_many(text, RIGHT_LOADED)
+    total = left + right
+
+    if total == 0:
+        return {
+            "score": 0.0, "found": [], "count": 0,
+            "lean": 0.0,
+            "sub": {"left_hits": 0, "right_hits": 0,
+                    "loaded_density_per_1000": 0.0},
+        }
+
+    density   = density_per_1000(total, n_words)
+    intensity = smooth_score(density, HALF_SLANT)
+    lean      = (right - left) / total
+    flagged   = right_found if right >= left else left_found
+
+    return {
+        "score": round(intensity, 1),
+        "found": flagged,
+        "count": total,
+        "lean":  round(lean, 2),
+        "sub": {
+            "left_hits":               left,
+            "right_hits":              right,
+            "loaded_density_per_1000": round(density, 2),
+        },
+    }
+
+
+def clickbait_gap(raw_title: str, raw_body: str) -> tuple:
+    """
+    Compare drama-density in the headline vs. drama-density in the body.
+    A big gap means the headline is overselling the story.
+
+    Returns (gap_score_0_100, title_drama, body_drama) where each
+    drama value is a density-per-1000-words number.
+    """
+    if not raw_title.strip() or not raw_body.strip():
+        return 0.0, 0.0, 0.0
+
+    t_text  = normalize_text(raw_title)
+    b_text  = normalize_text(raw_body)
+    t_words = word_count(t_text)
+    b_words = word_count(b_text)
+
+    def _drama(text_lc: str, nw: int) -> float:
+        total = 0
+        for lex in (SENSATIONAL_WORDS, ABSOLUTE_WORDS,
+                    FRAMING_WORDS, SUPERLATIVES):
+            c, _ = count_many(text_lc, lex)
+            total += c
+        return density_per_1000(total, nw)
+
+    t_drama = _drama(t_text, t_words)
+    b_drama = _drama(b_text, b_words)
+    gap = max(0.0, t_drama - b_drama)
+    gap_score = smooth_score(gap, HALF_CLICKBAIT_GAP)
+    return round(gap_score, 1), round(t_drama, 2), round(b_drama, 2)
+
+
+# ==========================================================
+# SECTION 5: AGGREGATOR - run everything, return one report
+# ==========================================================
+
+def analyze_article(title: str, body: str) -> dict:
+    """
+    Run the whole pipeline and return a single report dict that the
+    GUI can render, the CSV logger can save, or an external caller
+    can consume programmatically.
+    """
+    raw_title = title.strip()
+    raw_body  = body.strip()
+    combined  = (raw_title + ". " + raw_body) if raw_title else raw_body
+
+    text    = normalize_text(combined)
+    n_words = word_count(text)
+    stats   = gather_article_stats(raw_title, raw_body, n_words)
+
+    # Run each dimension
+    loaded  = score_loaded_language(text, n_words, stats)
+    sentim  = score_sentiment_imbalance(text, n_words, stats)
+    subj    = score_subjectivity(text, n_words, stats)
+    src     = score_source_opacity(text, n_words, stats)
+    frame   = score_sensational_framing(text, n_words, stats)
+    slant   = score_political_slant(text, n_words, stats)
+
+    # Radar values must follow the same order as RADAR_LABELS.
+    radar = [loaded["score"], sentim["score"], subj["score"],
+             src["score"], frame["score"], slant["score"]]
+    overall = sum(radar) / len(radar)
+
+    confidence = confidence_from_length(n_words)
+    cb_score, t_drama, b_drama = clickbait_gap(raw_title, raw_body)
+
+    return {
+        "version":        APP_VERSION,
+        "title":          raw_title,
+        "when":           datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "n_words":        n_words,
+        "confidence":     round(confidence, 2),
+        "radar_labels":   RADAR_LABELS,
+        "radar_values":   radar,
+        "overall_score":  round(overall, 1),
+        "political_lean": slant["lean"],
+        "clickbait_gap":  cb_score,
+        "title_drama":    t_drama,
+        "body_drama":     b_drama,
+        "stats":          {
+            "exclamations":    stats["exclamations"],
+            "questions":       stats["questions"],
+            "all_caps_words":  stats["all_caps_words"],
+            "quoted_segments": stats["quoted_segments"],
+            "paragraphs":      stats["paragraphs"],
+        },
+        "details": {
+            "Loaded Language":     loaded,
+            "Sentiment Imbalance": sentim,
+            "Subjectivity":        subj,
+            "Source Opacity":      src,
+            "Sensational Framing": frame,
+            "Political Slant":     slant,
+        },
+    }
+
+
+# ==========================================================
+# SECTION 6: VERDICT + SUGGESTIONS
+# ==========================================================
+
+def build_verdict(overall_score: float) -> tuple:
+    """Translate 0-100 score into (label, explanation)."""
+    for ceiling, label, msg in VERDICT_THRESHOLDS:
+        if overall_score < ceiling:
+            return label, msg
+    return "UNKNOWN", ""
+
+
+def describe_lean(lean: float) -> str:
+    """Plain-English for the political-lean number."""
+    if lean <= -0.6: return "Strong LEFT lean"
+    if lean <= -0.2: return "Moderate LEFT lean"
+    if lean <   0.2: return "Roughly centered / no clear lean"
+    if lean <   0.6: return "Moderate RIGHT lean"
+    return "Strong RIGHT lean"
+
+
+def describe_confidence(conf: float) -> str:
+    """Plain-English for the confidence number."""
+    if conf < 0.3: return "LOW  (article is very short)"
+    if conf < 0.6: return "MEDIUM"
+    return "HIGH"
+
+
+def build_suggestions(report: dict) -> list:
+    """Concrete tips based on which axes scored high."""
+    tips = []
+    d = report["details"]
+
+    if d["Loaded Language"]["score"] >= 40:
+        tips.append(
+            "Replace dramatic words ('shocking', 'devastating') with "
+            "plain descriptions of what actually happened.")
+    if d["Sentiment Imbalance"]["score"] >= 40:
+        tips.append(
+            "The tone leans heavily one way. Add at least one "
+            "counter-perspective or fact that cuts against the emotion.")
+    if d["Subjectivity"]["score"] >= 40:
+        tips.append(
+            "Drop opinion markers like 'obviously' and 'clearly'. "
+            "If something is obvious, the evidence alone will show it.")
+    if d["Source Opacity"]["score"] >= 50:
+        tips.append(
+            "Too many unnamed sources. Attribute quotes to specific, "
+            "named people or documents.")
+    if d["Sensational Framing"]["score"] >= 40:
+        tips.append(
+            "Us-vs-them verbs ('slammed', 'attacked') are persuasive, "
+            "not informative. Prefer neutral verbs like 'said' or 'criticized'.")
+    if d["Political Slant"]["score"] >= 40:
+        tips.append(
+            "Political buzzwords are dense. Read a second outlet from "
+            "the other side before forming an opinion.")
+    if report["clickbait_gap"] >= 40:
+        tips.append(
+            "The headline is much more dramatic than the article body - "
+            "that is a classic clickbait pattern.")
+    if report["confidence"] < 0.3:
+        tips.append(
+            "Confidence is LOW because the article is very short. "
+            "Treat these scores as suggestive, not conclusive.")
+
+    if not tips:
+        tips.append("Looks fairly balanced. Still verify facts independently.")
+    return tips
+
+
+# ==========================================================
+# SECTION 7: CSV SESSION LOGGING
+# ==========================================================
+
+CSV_COLUMNS = [
+    "when", "title", "n_words", "confidence",
+    "overall_score", "verdict", "political_lean", "clickbait_gap",
+    "loaded", "sentiment", "subjectivity",
+    "source_opacity", "framing", "slant",
+]
+
+
+def ensure_csv_exists():
+    """Create biaslab_sessions.csv with headers if missing/empty."""
+    if not os.path.exists(CSV_FILENAME) or os.path.getsize(CSV_FILENAME) == 0:
+        with open(CSV_FILENAME, "w", newline="", encoding="utf-8") as f:
+            csv.writer(f).writerow(CSV_COLUMNS)
+
+
+def save_session(report: dict):
+    """Append one analysis to the CSV log."""
+    ensure_csv_exists()
+    verdict_label, _ = build_verdict(report["overall_score"])
+    d = report["details"]
+    row = [
+        report["when"],
+        report["title"][:80],
+        report["n_words"],
+        report["confidence"],
+        report["overall_score"],
+        verdict_label,
+        report["political_lean"],
+        report["clickbait_gap"],
+        d["Loaded Language"]["score"],
+        d["Sentiment Imbalance"]["score"],
+        d["Subjectivity"]["score"],
+        d["Source Opacity"]["score"],
+        d["Sensational Framing"]["score"],
+        d["Political Slant"]["score"],
+    ]
+    with open(CSV_FILENAME, "a", newline="", encoding="utf-8") as f:
+        csv.writer(f).writerow(row)
+
+
+# ==========================================================
+# SECTION 8: TKINTER GUI
+# ==========================================================
+# We wrap the UI in a class so widgets and the current report are
+# all stored on `self`.  The class only exposes a handful of
+# methods that correspond to user actions.
+
+class BiasLabApp:
+    """Main application window."""
+
+    # --- palette (dark theme) ----------------------------------
+    COLOR_BG       = "#0f172a"   # deep navy
+    COLOR_PANEL    = "#1e293b"   # slate
+    COLOR_PANEL_2  = "#172033"   # darker panel for inputs
+    COLOR_ACCENT   = "#38bdf8"   # bright cyan
+    COLOR_ACCENT_2 = "#8b5cf6"   # soft purple (secondary)
+    COLOR_TEXT     = "#e2e8f0"   # near-white
+    COLOR_MUTED    = "#94a3b8"   # grey
+    COLOR_DANGER   = "#f87171"   # soft red
+    COLOR_GOOD     = "#4ade80"   # soft green
+    COLOR_WARN     = "#fbbf24"   # amber
+
+    def __init__(self, root: tk.Tk):
+        self.root = root
+        self.current_report = None
+
+        self.root.title(f"BiasLab v{APP_VERSION} - Media Bias Radar")
+        self.root.geometry("1280x820")
+        self.root.configure(bg=self.COLOR_BG)
+        self.root.minsize(1080, 720)
+
+        self._configure_styles()
+        self._build_ui()
+
+    # ==========================================================
+    # UI CONSTRUCTION
+    # ==========================================================
+
+    def _configure_styles(self):
+        """Dark-theme every ttk widget we use."""
+        s = ttk.Style()
+        s.theme_use("clam")
+
+        s.configure("TNotebook", background=self.COLOR_BG, borderwidth=0)
+        s.configure(
+            "TNotebook.Tab",
+            background=self.COLOR_PANEL,
+            foreground=self.COLOR_TEXT,
+            padding=(14, 6),
             font=("Segoe UI", 10, "bold"),
-            bg="#2563eb",
-            fg="white",
+        )
+        s.map(
+            "TNotebook.Tab",
+            background=[("selected", self.COLOR_ACCENT)],
+            foreground=[("selected", "#0f172a")],
+        )
+
+        s.configure(
+            "Accent.TButton",
+            background=self.COLOR_ACCENT,
+            foreground="#0f172a",
+            font=("Segoe UI", 11, "bold"),
+            padding=(14, 8),
+            borderwidth=0,
+        )
+        s.map("Accent.TButton", background=[("active", "#0ea5e9")])
+
+        s.configure(
+            "Ghost.TButton",
+            background=self.COLOR_PANEL,
+            foreground=self.COLOR_TEXT,
+            padding=(10, 6),
+            borderwidth=0,
+        )
+        s.map("Ghost.TButton", background=[("active", "#334155")])
+
+    def _build_ui(self):
+        """Top-level layout: banner + two-column main area."""
+        # ----- BANNER ----------------------------------------
+        banner = tk.Frame(self.root, bg=self.COLOR_BG, pady=14)
+        banner.pack(fill="x")
+
+        tk.Label(
+            banner, text="BiasLab",
+            font=("Segoe UI", 24, "bold"),
+            fg=self.COLOR_ACCENT, bg=self.COLOR_BG,
+        ).pack(anchor="w", padx=20)
+
+        tk.Label(
+            banner,
+            text=(f"Media Bias Radar v{APP_VERSION}  -  "
+                  "paste an article, see the hidden language patterns"),
+            font=("Segoe UI", 11),
+            fg=self.COLOR_MUTED, bg=self.COLOR_BG,
+        ).pack(anchor="w", padx=20)
+
+        # ----- MAIN AREA (two columns) -----------------------
+        main = tk.Frame(self.root, bg=self.COLOR_BG)
+        main.pack(fill="both", expand=True, padx=16, pady=(0, 12))
+
+        main.grid_columnconfigure(0, weight=1, uniform="col")
+        main.grid_columnconfigure(1, weight=1, uniform="col")
+        main.grid_rowconfigure(0, weight=1)
+
+        self._build_input_panel(main)
+        self._build_results_panel(main)
+
+    def _build_input_panel(self, parent):
+        """Left column: headline, body, action buttons."""
+        panel = tk.Frame(parent, bg=self.COLOR_PANEL)
+        panel.grid(row=0, column=0, sticky="nsew", padx=(0, 8))
+
+        tk.Label(
+            panel, text="1. Paste an article",
+            font=("Segoe UI", 13, "bold"),
+            fg=self.COLOR_TEXT, bg=self.COLOR_PANEL,
+        ).pack(anchor="w", padx=14, pady=(14, 4))
+
+        # --- headline -----------------------------------------
+        tk.Label(
+            panel, text="Headline / title",
+            font=("Segoe UI", 10),
+            fg=self.COLOR_MUTED, bg=self.COLOR_PANEL,
+        ).pack(anchor="w", padx=14)
+
+        self.title_entry = tk.Entry(
+            panel,
+            font=("Segoe UI", 11),
+            bg=self.COLOR_PANEL_2, fg=self.COLOR_TEXT,
+            insertbackground=self.COLOR_TEXT,
             relief="flat",
-            padx=16,
-            pady=8,
-        ).pack(anchor="e", padx=18, pady=(0, 16))
-
-    def _criterion_prompt(self, key):
-        prompt_map = {
-            "need_fit": "How helpful is this option for what you actually want right now?",
-            "long_term": "How good is this option after 6-12 months?",
-            "tradeoff": "Is this option worth what you must give up (money/time/effort)?",
-            "evidence": "How much real proof supports this option (facts, patterns, data)?",
-            "compatibility": "How easily does this option fit your current life/system?",
-        }
-        return prompt_map.get(key, key)
-
-    def _customize_question_wording(self, questions):
-        """Make prompts concrete for detected dilemma domain and selected options."""
-        prompt_overrides = {}
-        hint_overrides = {}
-
-        opposite_prompt, opposite_hint = self._counter_prompt()
-        prompt_overrides["counter_strength"] = opposite_prompt
-        hint_overrides["counter_strength"] = opposite_hint
-
-        if self.context == "relationship":
-            prompt_overrides.update(
-                {
-                    "emotion": "How emotionally affected are you when you think about this person/situation?",
-                    "social_pressure": "How much are friends/family/social opinions shaping this choice?",
-                    "fairness": "How respectful is your current choice for both people involved?",
-                    "alt_exploration": "Have you seriously considered both paths (approach vs not approach / continue vs stop)?",
-                }
-            )
-
-        if self.context == "career":
-            prompt_overrides.update(
-                {
-                    "social_pressure": "How much are status/parents/society pushing this choice?",
-                    "identity_attachment": "How much is this tied to your image of success?",
-                    "evidence": "How strong are real facts (market, mentors, outcomes) supporting this?",
-                }
-            )
-
-        if self.context == "purchase":
-            prompt_overrides.update(
-                {
-                    "tradeoff": "How good is value-for-money in this option?",
-                    "compatibility": "How well does this fit your existing setup/ecosystem?",
-                }
-            )
-
-        if self.context == "health":
-            prompt_overrides.update(
-                {
-                    "emotion": "How much fear/anxiety is driving this health choice?",
-                    "evidence": "How strongly is this backed by trusted health advice/data?",
-                    "harm_risk": "If this choice is wrong, how much could it hurt your health?",
-                }
-            )
-
-        if self.context == "academic":
-            prompt_overrides.update(
-                {
-                    "urgency": "How rushed do you feel because of deadlines/exams?",
-                    "alt_exploration": "How much did you compare alternatives (course/plan/path) properly?",
-                }
-            )
-
-        for question in questions:
-            key = question.get("key")
-            if key in prompt_overrides:
-                question["prompt"] = prompt_overrides[key]
-            if key in hint_overrides:
-                question["hint"] = hint_overrides[key]
-
-        return questions
-
-    def _base_cognitive_questions(self):
-        """Base question set selected by context + decision scale (common categories only)."""
-        if self.decision_scale == "small":
-            questions = [
-                {
-                    "id": "emotion",
-                    "type": "single_scale",
-                    "key": "emotion",
-                    "prompt": "How emotionally loaded are you about this decision right now?",
-                    "hint": "0 = calm, 10 = very emotional",
-                    "default": 3,
-                },
-                {
-                    "id": "urgency",
-                    "type": "single_scale",
-                    "key": "urgency",
-                    "prompt": "How rushed do you feel to decide now?",
-                    "hint": "0 = no rush, 10 = extreme rush",
-                    "default": 3,
-                },
-                {
-                    "id": "social_pressure",
-                    "type": "single_scale",
-                    "key": "social_pressure",
-                    "prompt": "How much are others pushing you toward one option?",
-                    "hint": "0 = no pressure from others, 10 = very strong pressure",
-                    "default": 2,
-                },
-                {
-                    "id": "counter_strength",
-                    "type": "single_scale",
-                    "key": "counter_strength",
-                    "prompt": "How strong is the best case for the other option?",
-                    "hint": "0 = almost no case, 10 = very strong case",
-                    "default": 5,
-                },
-                {
-                    "id": "alt_exploration",
-                    "type": "single_scale",
-                    "key": "alt_exploration",
-                    "prompt": "Did you genuinely check at least one other option?",
-                    "hint": "0 = not at all, 10 = yes carefully",
-                    "default": 5,
-                },
-                {
-                    "id": "fairness",
-                    "type": "single_scale",
-                    "key": "fairness",
-                    "prompt": "How respectful and fair is this choice to everyone involved?",
-                    "hint": "0 = unfair/disrespectful, 10 = very fair/respectful",
-                    "default": 8,
-                },
-            ]
-            if self.context == "purchase":
-                questions.insert(
-                    3,
-                    {
-                        "id": "novelty_pull",
-                        "type": "single_scale",
-                        "key": "novelty_pull",
-                        "prompt": "Are you choosing mostly because it feels new/exciting?",
-                        "hint": "0 = no, 10 = mostly yes",
-                        "default": 4,
-                    },
-                )
-            return self._customize_question_wording(questions)
-
-        base_questions = [
-            {
-                "id": "emotion",
-                "type": "single_scale",
-                "key": "emotion",
-                "prompt": "How emotionally charged do you feel about this decision?",
-                "hint": "0 = calm, 10 = highly emotional",
-                "default": 5,
-            },
-            {
-                "id": "urgency",
-                "type": "single_scale",
-                "key": "urgency",
-                "prompt": "How much pressure do you feel to decide fast?",
-                "hint": "0 = no pressure, 10 = very rushed",
-                "default": 5,
-            },
-            {
-                "id": "social_pressure",
-                "type": "single_scale",
-                "key": "social_pressure",
-                "prompt": "How much are family/friends/society pushing your choice?",
-                "hint": "0 = no influence, 10 = very strong influence",
-                "default": 4,
-            },
-            {
-                "id": "counter_strength",
-                "type": "single_scale",
-                "key": "counter_strength",
-                "prompt": "How strong is the best case for the opposite option?",
-                "hint": "0 = very weak, 10 = very strong",
-                "default": 5,
-            },
-            {
-                "id": "alt_exploration",
-                "type": "single_scale",
-                "key": "alt_exploration",
-                "prompt": "How seriously did you compare other options?",
-                "hint": "0 = barely compared, 10 = compared thoroughly",
-                "default": 5,
-            },
-            {
-                "id": "fairness",
-                "type": "single_scale",
-                "key": "fairness",
-                "prompt": "How respectful and fair is your current choice to all affected people?",
-                "hint": "0 = unfair/disrespectful, 10 = very fair/respectful",
-                "default": 7,
-            },
-            {
-                "id": "harm_risk",
-                "type": "single_scale",
-                "key": "harm_risk",
-                "prompt": "If this choice turns out wrong, how serious could the damage be?",
-                "hint": "0 = almost no harm, 10 = severe harm",
-                "default": 5,
-            },
-        ]
-
-        if self.decision_scale == "major":
-            major_additions = [
-                {
-                    "id": "identity_attachment",
-                    "type": "single_scale",
-                    "key": "identity_attachment",
-                    "prompt": "How much is your self-image attached to one option?",
-                    "hint": "0 = not attached, 10 = strongly attached",
-                    "default": 5,
-                },
-                {
-                    "id": "sunk_cost",
-                    "type": "single_scale",
-                    "key": "sunk_cost",
-                    "prompt": "How much are past time/money efforts trapping you in this choice?",
-                    "hint": "0 = no effect, 10 = very strong effect",
-                    "default": 5,
-                },
-                {
-                    "id": "loss_aversion",
-                    "type": "single_scale",
-                    "key": "loss_aversion",
-                    "prompt": "How much fear of losing something is driving this choice?",
-                    "hint": "0 = not at all, 10 = very much",
-                    "default": 5,
-                },
-                {
-                    "id": "failure_preview",
-                    "type": "single_scale",
-                    "key": "failure_preview",
-                    "prompt": "How clearly can you imagine this choice going badly?",
-                    "hint": "0 = cannot imagine, 10 = very clearly",
-                    "default": 5,
-                },
-                {
-                    "id": "regret_preview",
-                    "type": "single_scale",
-                    "key": "regret_preview",
-                    "prompt": "How clearly can you imagine regretting this later?",
-                    "hint": "0 = unclear, 10 = very clear",
-                    "default": 5,
-                },
-            ]
-            base_questions[3:3] = major_additions
-
-        return self._customize_question_wording(base_questions)
-
-    def _build_option_questions(self):
-        """Adaptive option-comparison questions. One criterion per step, two sliders inside."""
-        if self.decision_scale == "small":
-            keys = ["need_fit", "tradeoff", "evidence"]
-            if self.context == "purchase":
-                keys.append("compatibility")
-        elif self.decision_scale == "major":
-            keys = ["need_fit", "evidence", "long_term", "compatibility", "tradeoff"]
-        else:
-            keys = ["need_fit", "evidence", "tradeoff", "compatibility"]
-
-        if self.context == "relationship" and "long_term" not in keys:
-            keys.insert(2, "long_term")
-
-        questions = []
-        for key in keys:
-            questions.append(
-                {
-                    "id": f"pair_{key}",
-                    "type": "pair_scale",
-                    "key": key,
-                    "prompt": self._criterion_prompt(key),
-                    "hint": f"Rate {self.option_a} and {self.option_b} separately on this criterion.",
-                    "default": 5,
-                }
-            )
-
-        questions.append(
-            {
-                "id": "reason_a",
-                "type": "text",
-                "key": "reason_a",
-                "prompt": f"In one sentence: best practical reason to choose {self.option_a}",
-                "hint": "Use practical reasons, not vibes.",
-                "required": False,
-            }
         )
-        questions.append(
-            {
-                "id": "reason_b",
-                "type": "text",
-                "key": "reason_b",
-                "prompt": f"In one sentence: best practical reason to choose {self.option_b}",
-                "hint": "Use practical reasons, not vibes.",
-                "required": False,
-            }
+        self.title_entry.pack(fill="x", padx=14, pady=(2, 10), ipady=6)
+
+        # --- body ---------------------------------------------
+        tk.Label(
+            panel, text="Article body",
+            font=("Segoe UI", 10),
+            fg=self.COLOR_MUTED, bg=self.COLOR_PANEL,
+        ).pack(anchor="w", padx=14)
+
+        self.body_text = scrolledtext.ScrolledText(
+            panel, wrap="word",
+            font=("Segoe UI", 10),
+            bg=self.COLOR_PANEL_2, fg=self.COLOR_TEXT,
+            insertbackground=self.COLOR_TEXT,
+            relief="flat", height=20,
         )
-        return questions
+        self.body_text.pack(fill="both", expand=True,
+                            padx=14, pady=(2, 10))
 
-    def _append_question_if_new(self, question):
-        existing_ids = {q["id"] for q in self.cognitive_questions}
-        if question["id"] not in existing_ids and question["id"] not in self.asked_question_ids:
-            self.cognitive_questions.append(question)
-            self.total_steps_estimate += 1
+        # --- buttons ------------------------------------------
+        btn_row = tk.Frame(panel, bg=self.COLOR_PANEL)
+        btn_row.pack(fill="x", padx=14, pady=(0, 14))
 
-    def _inject_followups(self, question, normalized_value):
-        """Add targeted follow-up prompts based on previous answers."""
-        key = question.get("key")
+        ttk.Button(btn_row, text="Analyze",     style="Accent.TButton",
+                   command=self.on_analyze).pack(side="left")
+        ttk.Button(btn_row, text="Load Sample", style="Ghost.TButton",
+                   command=self.on_load_sample).pack(side="left", padx=6)
+        ttk.Button(btn_row, text="Clear",       style="Ghost.TButton",
+                   command=self.on_clear).pack(side="left")
+        ttk.Button(btn_row, text="Save to CSV", style="Ghost.TButton",
+                   command=self.on_save).pack(side="right")
 
-        if key == "emotion" and normalized_value >= 0.70:
-            self._append_question_if_new(
-                {
-                    "id": "emotion_source_note",
-                    "type": "text",
-                    "key": "emotion_source_note",
-                    "prompt": "What exactly is creating this strong emotion?",
-                    "hint": "Naming it helps reduce hidden bias.",
-                    "required": True,
-                }
+    def _build_results_panel(self, parent):
+        """Right column: notebook with Overview / Radar / Flagged / Tips."""
+        panel = tk.Frame(parent, bg=self.COLOR_PANEL)
+        panel.grid(row=0, column=1, sticky="nsew", padx=(8, 0))
+
+        tk.Label(
+            panel, text="2. Bias report",
+            font=("Segoe UI", 13, "bold"),
+            fg=self.COLOR_TEXT, bg=self.COLOR_PANEL,
+        ).pack(anchor="w", padx=14, pady=(14, 4))
+
+        self.tabs = ttk.Notebook(panel)
+        self.tabs.pack(fill="both", expand=True, padx=10, pady=(4, 14))
+
+        # --- Overview tab -------------------------------------
+        self.tab_overview = tk.Frame(self.tabs, bg=self.COLOR_PANEL)
+        self.tabs.add(self.tab_overview, text="Overview")
+
+        self.overview_text = tk.Text(
+            self.tab_overview, wrap="word",
+            font=("Consolas", 10),
+            bg=self.COLOR_PANEL_2, fg=self.COLOR_TEXT,
+            relief="flat", padx=10, pady=10,
+        )
+        self.overview_text.pack(fill="both", expand=True, padx=8, pady=8)
+        # colour tags for nicer overview styling
+        self.overview_text.tag_configure("header", foreground=self.COLOR_ACCENT,
+                                         font=("Consolas", 11, "bold"))
+        self.overview_text.tag_configure("warn",   foreground=self.COLOR_WARN)
+        self.overview_text.tag_configure("good",   foreground=self.COLOR_GOOD)
+        self.overview_text.tag_configure("danger", foreground=self.COLOR_DANGER)
+        self.overview_text.tag_configure("muted",  foreground=self.COLOR_MUTED)
+        self.overview_text.configure(state="disabled")
+
+        # --- Radar tab ----------------------------------------
+        self.tab_radar = tk.Frame(self.tabs, bg=self.COLOR_PANEL)
+        self.tabs.add(self.tab_radar, text="Radar Chart")
+        self.radar_canvas = None
+
+        # --- Flagged words tab --------------------------------
+        self.tab_flagged = tk.Frame(self.tabs, bg=self.COLOR_PANEL)
+        self.tabs.add(self.tab_flagged, text="Flagged Words")
+
+        self.flagged_text = tk.Text(
+            self.tab_flagged, wrap="word",
+            font=("Consolas", 10),
+            bg=self.COLOR_PANEL_2, fg=self.COLOR_TEXT,
+            relief="flat", padx=10, pady=10,
+        )
+        self.flagged_text.pack(fill="both", expand=True, padx=8, pady=8)
+        self.flagged_text.configure(state="disabled")
+
+        # --- Suggestions tab ----------------------------------
+        self.tab_tips = tk.Frame(self.tabs, bg=self.COLOR_PANEL)
+        self.tabs.add(self.tab_tips, text="Suggestions")
+
+        self.tips_text = tk.Text(
+            self.tab_tips, wrap="word",
+            font=("Segoe UI", 11),
+            bg=self.COLOR_PANEL_2, fg=self.COLOR_TEXT,
+            relief="flat", padx=10, pady=10,
+        )
+        self.tips_text.pack(fill="both", expand=True, padx=8, pady=8)
+        self.tips_text.configure(state="disabled")
+
+        self._show_placeholder()
+
+    def _show_placeholder(self):
+        """Friendly hints before the user has clicked Analyze."""
+        placeholder = (
+            "Paste an article on the left, then click  Analyze.\n\n"
+            "BiasLab will:\n"
+            "  * score the text on six bias dimensions\n"
+            "  * draw a radar chart\n"
+            "  * highlight the exact phrases that swayed the score\n"
+            "  * flag clickbait headlines\n"
+            "  * report how confident the analysis is\n"
+            "  * give concrete rewriting tips\n\n"
+            "Tip: hit  Load Sample  for an instant demo."
+        )
+        self._write_plain(self.overview_text, placeholder)
+        self._write_plain(self.flagged_text, "No analysis yet.")
+        self._write_plain(self.tips_text,
+                          "Suggestions appear after you analyze an article.")
+
+    # ==========================================================
+    # BUTTON HANDLERS
+    # ==========================================================
+
+    def on_analyze(self):
+        """Read inputs, run the pipeline, populate all tabs."""
+        title = self.title_entry.get().strip()
+        body  = self.body_text.get("1.0", "end").strip()
+
+        if len(body) < 50:
+            messagebox.showwarning(
+                "Not enough text",
+                "Please paste at least a short paragraph (50+ characters).",
             )
-
-        if key == "social_pressure" and normalized_value >= 0.60:
-            self._append_question_if_new(
-                {
-                    "id": "social_source_note",
-                    "type": "text",
-                    "key": "social_source_note",
-                    "prompt": "Who is influencing your decision the most right now?",
-                    "hint": "Be specific.",
-                    "required": True,
-                }
-            )
-
-        if key == "urgency" and normalized_value >= 0.65:
-            self._append_question_if_new(
-                {
-                    "id": "urgency_reason_note",
-                    "type": "text",
-                    "key": "urgency_reason_note",
-                    "prompt": "Is this urgency truly real, or are you creating it yourself?",
-                    "hint": "Write one sentence.",
-                    "required": True,
-                }
-            )
-
-        if key == "counter_strength" and normalized_value <= 0.45:
-            self._append_question_if_new(
-                {
-                    "id": "counter_text",
-                    "type": "text",
-                    "key": "counter_text",
-                    "prompt": "Write one strong reason your current preferred option might be wrong.",
-                    "hint": "This is required for bias resistance.",
-                    "required": True,
-                }
-            )
-
-        if key == "fairness" and normalized_value <= 0.45:
-            self._append_question_if_new(
-                {
-                    "id": "harm_risk",
-                    "type": "single_scale",
-                    "key": "harm_risk",
-                    "prompt": "If your choice is unfair, how much harm could it cause others?",
-                    "hint": "0 = almost none, 10 = severe harm",
-                    "default": 6,
-                }
-            )
-
-    def _get_active_questions(self):
-        return self.cognitive_questions if self.current_phase == "cognitive" else self.option_questions
-
-    def _header_copy(self):
-        if self.current_phase == "cognitive":
-            return "Adaptive Bias Questions"
-        return "Adaptive Option Comparison"
-
-    def _phase_copy(self):
-        if self.current_phase == "cognitive":
-            profile = getattr(self, "dilemma_profile", None)
-            if profile:
-                return (
-                    f"Detected dilemma: {profile['summary']} | "
-                    f"Confidence: {profile['confidence'].title()}"
-                )
-            return f"Detected: {self.context.title()} decision ({self.decision_scale})"
-        return f"Compare options carefully: {self.option_a} vs {self.option_b}"
-
-    def _render_question_screen(self):
-        """Render one question at a time with a cleaner card-style UI."""
-        self.clear()
-
-        active_questions = self._get_active_questions()
-        if self.current_index >= len(active_questions):
-            if self.current_phase == "cognitive":
-                self.current_phase = "options"
-                self.current_index = 0
-                self._render_question_screen()
-                return
-            self.compute_analysis()
             return
 
-        self.current_question = active_questions[self.current_index]
+        report = analyze_article(title, body)
+        self.current_report = report
+        self._show_results(report)
 
-        root_wrap = tk.Frame(self.root, bg="#f3f5fb")
-        root_wrap.pack(fill="both", expand=True, padx=24, pady=16)
+    def on_load_sample(self):
+        """Fill inputs with the built-in biased sample article."""
+        self.title_entry.delete(0, "end")
+        self.title_entry.insert(0, SAMPLE_TITLE)
+        self.body_text.delete("1.0", "end")
+        self.body_text.insert("1.0", SAMPLE_BODY)
 
-        tk.Label(root_wrap, text="BiasLab", font=("Segoe UI", 24, "bold"), bg="#f3f5fb", fg="#1f2937").pack(anchor="w")
-        tk.Label(root_wrap, text=self._header_copy(), font=("Segoe UI", 12, "bold"), bg="#f3f5fb", fg="#334155").pack(anchor="w", pady=(3, 0))
-        tk.Label(root_wrap, text=self._phase_copy(), font=("Segoe UI", 10), bg="#f3f5fb", fg="#475569").pack(anchor="w", pady=(0, 8))
+    def on_clear(self):
+        """Reset everything."""
+        self.title_entry.delete(0, "end")
+        self.body_text.delete("1.0", "end")
+        self.current_report = None
+        self._show_placeholder()
+        for w in self.tab_radar.winfo_children():
+            w.destroy()
+        self.radar_canvas = None
 
-        progress_pct = int((self.completed_steps / max(self.total_steps_estimate, 1)) * 100)
-        ttk.Progressbar(root_wrap, mode="determinate", value=progress_pct, maximum=100, length=760).pack(anchor="w", pady=(0, 10))
-
-        card = tk.Frame(root_wrap, bg="white", highlightbackground="#dbe3f1", highlightthickness=1)
-        card.pack(fill="both", expand=True)
-
-        q = self.current_question
-        tk.Label(card, text=f"Question {self.completed_steps + 1}", font=("Segoe UI", 10, "bold"), bg="white", fg="#2563eb").pack(anchor="w", padx=18, pady=(16, 2))
-        tk.Label(card, text=q["prompt"], font=("Segoe UI", 14, "bold"), bg="white", fg="#111827", wraplength=980, justify="left").pack(anchor="w", padx=18, pady=(0, 4))
-        tk.Label(card, text=q.get("hint", ""), font=("Segoe UI", 10), bg="white", fg="#6b7280", wraplength=980, justify="left").pack(anchor="w", padx=18, pady=(0, 12))
-
-        self.current_error_label = tk.Label(card, text="", font=("Segoe UI", 10), bg="white", fg="#b91c1c")
-        self.current_error_label.pack(anchor="w", padx=18)
-
-        self.current_scale_widget = None
-        self.current_scale_a_widget = None
-        self.current_scale_b_widget = None
-        self.current_text_widget = None
-
-        if q["type"] == "single_scale":
-            self.current_scale_widget = tk.Scale(card, from_=0, to=10, orient="horizontal", length=560, bg="white")
-            self.current_scale_widget.set(q.get("default", 5))
-            self.current_scale_widget.pack(anchor="w", padx=18, pady=(8, 18))
-
-        elif q["type"] == "pair_scale":
-            row_a = tk.Frame(card, bg="white")
-            row_a.pack(fill="x", padx=18, pady=(6, 6))
-            tk.Label(row_a, text=self.option_a, width=18, anchor="w", bg="white", fg="#111827", font=("Segoe UI", 10, "bold")).pack(side="left")
-            self.current_scale_a_widget = tk.Scale(row_a, from_=0, to=10, orient="horizontal", length=460, bg="white")
-            self.current_scale_a_widget.set(q.get("default", 5))
-            self.current_scale_a_widget.pack(side="left")
-
-            row_b = tk.Frame(card, bg="white")
-            row_b.pack(fill="x", padx=18, pady=(0, 14))
-            tk.Label(row_b, text=self.option_b, width=18, anchor="w", bg="white", fg="#111827", font=("Segoe UI", 10, "bold")).pack(side="left")
-            self.current_scale_b_widget = tk.Scale(row_b, from_=0, to=10, orient="horizontal", length=460, bg="white")
-            self.current_scale_b_widget.set(q.get("default", 5))
-            self.current_scale_b_widget.pack(side="left")
-
-        elif q["type"] == "text":
-            self.current_text_widget = tk.Text(card, height=5, width=110, bg="#f8fafc", fg="#0f172a")
-            self.current_text_widget.pack(anchor="w", padx=18, pady=(8, 18))
-
-        footer = tk.Frame(card, bg="white")
-        footer.pack(fill="x", padx=18, pady=(4, 16))
-        tk.Label(footer, text=f"Progress: {self.completed_steps}/{self.total_steps_estimate}", bg="white", fg="#64748b").pack(side="left")
-
-        button_text = "Next" if (self.current_phase == "cognitive" or self.current_index < len(active_questions) - 1) else "Analyze Decision"
-        tk.Button(
-            footer,
-            text=button_text,
-            command=self._submit_current_question,
-            font=("Segoe UI", 10, "bold"),
-            bg="#2563eb",
-            fg="white",
-            padx=16,
-            pady=6,
-            relief="flat",
-        ).pack(side="right")
-
-    def _submit_current_question(self):
-        q = self.current_question
-        if q["type"] == "single_scale":
-            normalized = normalize(self.current_scale_widget.get())
-            self.answers[q["key"]] = normalized
-            self._inject_followups(q, normalized)
-
-        elif q["type"] == "pair_scale":
-            self.option_scores["A"][q["key"]] = normalize(self.current_scale_a_widget.get())
-            self.option_scores["B"][q["key"]] = normalize(self.current_scale_b_widget.get())
-
-        elif q["type"] == "text":
-            text_value = self.current_text_widget.get("1.0", tk.END).strip()
-            if q.get("required") and not text_value:
-                self.current_error_label.config(text="This answer is required to continue.")
-                return
-            self.answers[q["key"]] = text_value
-
-        self.asked_question_ids.add(q["id"])
-        self.completed_steps += 1
-        self.current_index += 1
-        self._render_question_screen()
-
-    def open_deep_assessment(self):
-        """Adaptive pipeline: one-question-at-a-time, with dynamic follow-ups."""
-        self._collect_intro_inputs()
-
-        self.answers = {}
-        self.option_scores = {"A": {}, "B": {}}
-        self.cognitive_questions = self._base_cognitive_questions()
-        self.option_questions = self._build_option_questions()
-        self.current_phase = "cognitive"
-        self.current_index = 0
-        self.completed_steps = 0
-        self.asked_question_ids = set()
-        self.total_steps_estimate = len(self.cognitive_questions) + len(self.option_questions)
-
-        self._render_question_screen()
-
-    # ======================================================
-    # SECTION 6: DATA COLLECTION HELPERS
-    # ======================================================
-
-    def _average(self, values):
-        return sum(values) / len(values) if values else 0.0
-
-    def _answer(self, key, default=0.5):
-        """Safe accessor for slider answers when a personalized question set omits some keys."""
-        return self.answers.get(key, default)
-
-    # ======================================================
-    # SECTION 7: MATH + SCORING ENGINE (ALL TECHNICALS)
-    # ======================================================
-
-    def _calculate_rational_quality(self, scores):
-        """Weighted rational score for one option."""
-        return sum(scores[key] * weight for key, weight in RATIONAL_WEIGHTS.items())
-
-    def _calculate_bias_pressure(self):
-        """Average pressure from affective/cognitive distortion signals."""
-        values = [self._answer(key) for key in BIAS_PRESSURE_KEYS]
-        values.append(1 - self._answer("counter_strength"))
-        return self._average(values)
-
-    def _calculate_foresight_gap(self):
-        """How weakly future consequences were explored."""
-        return self._average(
-            [
-                1 - self._answer("failure_preview"),
-                1 - self._answer("regret_preview"),
-                1 - self._answer("alt_exploration"),
-            ]
+    def on_save(self):
+        """Persist the most-recent analysis to CSV."""
+        if self.current_report is None:
+            messagebox.showinfo("Nothing to save", "Run an analysis first.")
+            return
+        save_session(self.current_report)
+        messagebox.showinfo(
+            "Saved",
+            f"Analysis appended to {CSV_FILENAME}",
         )
 
-    def _calculate_fairness_risk(self):
-        """Blend fairness deficit and harm risk."""
-        return clamp01((1 - self._answer("fairness")) * 0.60 + self._answer("harm_risk") * 0.40)
+    # ==========================================================
+    # RENDERING HELPERS
+    # ==========================================================
 
-    def _calculate_distortion_risk(
-        self,
-        bias_pressure,
-        foresight_gap,
-        fairness_risk,
-        weak_choice_penalty,
-        chosen_rational,
-    ):
-        """Final distortion risk composed from all core penalties."""
-        return clamp01(
-            bias_pressure * DISTORTION_WEIGHTS["bias_pressure"]
-            + foresight_gap * DISTORTION_WEIGHTS["foresight_gap"]
-            + fairness_risk * DISTORTION_WEIGHTS["fairness_risk"]
-            + weak_choice_penalty * DISTORTION_WEIGHTS["weak_choice_penalty"]
-            + (1 - chosen_rational) * DISTORTION_WEIGHTS["low_evidence_penalty"]
-        )
+    def _write_plain(self, widget: tk.Text, message: str):
+        """Replace the contents of a read-only Text widget."""
+        widget.configure(state="normal")
+        widget.delete("1.0", "end")
+        widget.insert("1.0", message)
+        widget.configure(state="disabled")
 
-    def _is_practically_justified(self, chosen_scores, justification_gap):
-        """Safeguard that prevents falsely labeling practical preferences as bias."""
-        return (
-            chosen_scores.get("compatibility", 0.5) >= 0.70
-            and chosen_scores.get("need_fit", 0.5) >= 0.65
-            and chosen_scores.get("evidence", 0.5) >= 0.55
-            and justification_gap >= 0.05
-            and self._answer("counter_strength") >= 0.45
-        )
+    def _bar(self, score: float, width: int = 22) -> str:
+        """Tiny ASCII progress bar used in the overview tab."""
+        filled = int(round((score / 100.0) * width))
+        return "[" + "#" * filled + "." * (width - filled) + "]"
 
-    def _assign_choice_labels(self, chosen_key):
-        self.chosen_key = chosen_key
-        self.other_key = "B" if chosen_key == "A" else "A"
-        self.chosen_label = self.option_a if chosen_key == "A" else self.option_b
-        self.other_label = self.option_b if chosen_key == "A" else self.option_a
+    def _show_results(self, report: dict):
+        """Render the full report into every tab."""
+        self._render_overview(report)
+        self._render_flagged(report)
+        self._render_tips(report)
+        self._draw_radar(report["radar_values"], report["radar_labels"])
 
-    def _detect_bias_patterns(self):
-        """Detect likely cognitive-bias patterns from scored signals and answers."""
-        rules = [
-            {
-                "name": "Emotional Reasoning",
-                "score": lambda: self._answer("emotion"),
-                "threshold": 0.70,
-                "reality": "Your feelings are so strong they may be driving the choice.",
-                "action": "Wait for emotions to cool down, then re-answer the questions.",
-            },
-            {
-                "name": "Social Pressure Bias",
-                "score": lambda: self._answer("social_pressure"),
-                "threshold": 0.65,
-                "reality": "Other people may be pushing your choice more than your own values.",
-                "action": "Decide in private first, then compare with outside opinions.",
-            },
-            {
-                "name": "Sunk Cost Fallacy",
-                "score": lambda: self._answer("sunk_cost"),
-                "threshold": 0.60,
-                "reality": "Past time/money may be trapping you in this choice.",
-                "action": "Ask: 'If I started today, would I still choose this?'",
-            },
-            {
-                "name": "Identity Attachment Bias",
-                "score": lambda: self._answer("identity_attachment"),
-                "threshold": 0.65,
-                "reality": "Your self-image may be tied to one option.",
-                "action": "Imagine you are advising a close friend with the same facts.",
-            },
-            {
-                "name": "Loss Aversion Bias",
-                "score": lambda: self._answer("loss_aversion"),
-                "threshold": 0.65,
-                "reality": "Fear of loss may be louder than real upside/downside balance.",
-                "action": "List likely losses and likely gains side by side.",
-            },
-            {
-                "name": "Novelty Attraction Bias",
-                "score": lambda: self._answer("novelty_pull"),
-                "threshold": 0.65,
-                "reality": "Newness/excitement may be making one option look better than it is.",
-                "action": "Re-score options while ignoring excitement and focusing on outcomes.",
-            },
-            {
-                "name": "Confirmation / Tunnel Vision",
-                "score": lambda: max(1 - self._answer("counter_strength"), 1 - self._answer("alt_exploration")),
-                "threshold": 0.55,
-                "reality": "You may be focusing too much on one side and not testing the other.",
-                "action": "Write the strongest argument for the opposite option.",
-            },
-            {
-                "name": "Outcome Blindness (Optimism Bias)",
-                "score": lambda: ((1 - self._answer("failure_preview")) + (1 - self._answer("regret_preview"))) / 2,
-                "threshold": 0.60,
-                "reality": "You may be underthinking how this could go wrong.",
-                "action": "Write a worst-case story and how you would handle it.",
-            },
-            {
-                "name": "Fairness Blind Spot",
-                "score": lambda: max(1 - self._answer("fairness"), self._answer("harm_risk")),
-                "threshold": 0.60,
-                "reality": "You may be underweighting how this affects other people.",
-                "action": "List who is affected and how your choice changes their life.",
-            },
-            {
-                "name": "Weak-Evidence Decision Bias",
-                "score": lambda: max(1 - self.chosen_rational, self.signal_map.get("Low Evidence Penalty", 0)),
-                "threshold": 0.60,
-                "reality": "Your choice may not be backed by enough real proof yet.",
-                "action": "Collect 2-3 concrete facts before fully committing.",
-            },
-        ]
+    def _render_overview(self, report: dict):
+        """Fill the big Overview tab with a pretty text dump."""
+        w = self.overview_text
+        w.configure(state="normal")
+        w.delete("1.0", "end")
 
-        hits = []
-        for rule in rules:
-            score = rule["score"]()
-            if score >= rule["threshold"]:
-                hits.append(
-                    {
-                        "name": rule["name"],
-                        "score": score,
-                        "reality": rule["reality"],
-                        "action": rule["action"],
-                    }
-                )
+        verdict_label, verdict_msg = build_verdict(report["overall_score"])
+        lean_msg = describe_lean(report["political_lean"])
+        conf_msg = describe_confidence(report["confidence"])
 
-        hits.sort(key=lambda item: item["score"], reverse=True)
-        return hits[:4]
+        # ---- top box -----
+        title = report["title"] or "(no title supplied)"
+        w.insert("end", "ARTICLE\n", "header")
+        w.insert("end", f"  Title       : {title}\n")
+        w.insert("end", f"  Analyzed on : {report['when']}\n")
+        w.insert("end", f"  Word count  : {report['n_words']}\n")
+        w.insert("end", f"  Confidence  : {report['confidence']:.2f} ({conf_msg})\n\n")
 
-    def _reality_check_lines(self):
-        lines = ["2) Reality Check"]
+        # ---- verdict -----
+        w.insert("end", "OVERALL\n", "header")
+        w.insert("end", f"  Overall bias score : {report['overall_score']:>5} / 100\n")
+        verdict_tag = ("danger" if report["overall_score"] >= 60
+                       else "warn" if report["overall_score"] >= 30
+                       else "good")
+        w.insert("end", f"  Verdict            : {verdict_label}\n", verdict_tag)
+        w.insert("end", f"    -> {verdict_msg}\n\n", "muted")
 
-        if self.justification_gap >= 0.10 and self.total_risk <= 0.45:
-            lines.append(
-                "- Reality: your current option is backed more by real reasons than by pressure."
-            )
-        elif self.justification_gap < 0 and self.total_risk >= 0.50:
-            lines.append(
-                "- Reality: your current leaning looks more driven by pressure than by real reasons."
-            )
-        else:
-            lines.append(
-                "- Reality: the decision is mixed; some reasons are solid, some are shaky."
-            )
+        w.insert("end", f"  Political lean     : {report['political_lean']:+.2f}"
+                        f"  ({lean_msg})\n")
+        w.insert("end", f"  Clickbait gap      : {report['clickbait_gap']:>5} / 100"
+                        f"  (title drama {report['title_drama']}, "
+                        f"body drama {report['body_drama']})\n\n")
 
-        lines.append(
-            f"- Snapshot: gap between options = {self.justification_gap:.2f}, bias risk = {self.total_risk:.2f}."
-        )
-        lines.append("")
-        return lines
+        # ---- article stats -----
+        s = report["stats"]
+        w.insert("end", "ARTICLE STATS\n", "header")
+        w.insert("end", f"  Paragraphs       : {s['paragraphs']}\n")
+        w.insert("end", f"  Exclamations     : {s['exclamations']}\n")
+        w.insert("end", f"  Questions        : {s['questions']}\n")
+        w.insert("end", f"  ALL-CAPS words   : {s['all_caps_words']}\n")
+        w.insert("end", f"  Quoted segments  : {s['quoted_segments']}\n\n")
 
-    def _bias_pattern_lines(self):
-        lines = ["4) Likely Biases"]
-        if not self.detected_biases:
-            lines.append("- No strong bias pattern detected. Still verify real evidence.")
-            lines.append("")
-            return lines
+        # ---- axis breakdown -----
+        w.insert("end", "AXIS BREAKDOWN  (score, bar, sub-factors)\n", "header")
+        for axis_name, info in report["details"].items():
+            bar = self._bar(info["score"])
+            w.insert("end", f"\n  {axis_name}  {info['score']:>5}  {bar}\n")
+            for key, value in info["sub"].items():
+                pretty_key = key.replace("_", " ")
+                w.insert("end", f"      - {pretty_key}: {value}\n", "muted")
 
-        for bias in self.detected_biases:
-            lines.append(f"- {bias['name']} ({bias['score']:.2f}): {bias['reality']}")
-        lines.append("")
-        return lines
+        w.configure(state="disabled")
 
-    def _bias_solution_lines(self):
-        lines = ["5) What You Should Do Next"]
+    def _render_flagged(self, report: dict):
+        """List the phrases that triggered each axis."""
+        lines = []
+        for axis_name, info in report["details"].items():
+            if info["found"]:
+                lines.append(f"{axis_name}  ({info['count']} hits):")
+                lines.append("    " + ", ".join(info["found"]))
+                lines.append("")
+        if not lines:
+            lines = ["No loaded or slanted vocabulary was detected. Nice."]
+        self._write_plain(self.flagged_text, "\n".join(lines))
 
-        if self.detected_biases:
-            for bias in self.detected_biases[:3]:
-                lines.append(f"- For {bias['name']}: {bias['action']}")
-        else:
-            lines.append("- Keep your plan, but confirm at least one more real fact first.")
+    def _render_tips(self, report: dict):
+        """List the suggestions."""
+        tips = build_suggestions(report)
+        body = "\n".join(f"{i}. {tip}\n" for i, tip in enumerate(tips, start=1))
+        self._write_plain(self.tips_text, body)
 
-        lines.append("- Re-run BiasLab after applying the steps above and compare distortion risk change.")
-        lines.append("")
-        return lines
+    def _draw_radar(self, values: list, labels: list):
+        """Draw the matplotlib radar chart inside the Radar tab."""
+        # wipe previous chart
+        for w in self.tab_radar.winfo_children():
+            w.destroy()
 
-    def compute_analysis(self):
-        """Primary compute pipeline: collect data -> run scoring -> build report state."""
-        chosen = self.leaning_var.get()
-        self._assign_choice_labels(chosen)
+        fig = Figure(figsize=(5.2, 5.2), dpi=100, facecolor=self.COLOR_PANEL)
+        ax = fig.add_subplot(111, polar=True, facecolor=self.COLOR_PANEL)
 
-        chosen_scores = self.option_scores.get(self.chosen_key, {})
-        other_scores = self.option_scores.get(self.other_key, {})
+        n = len(values)
+        angles = [i / float(n) * 2 * pi for i in range(n)]
+        values_closed = values + values[:1]
+        angles_closed = angles + angles[:1]
 
-        for key in OPTION_CRITERIA_KEYS:
-            chosen_scores.setdefault(key, 0.5)
-            other_scores.setdefault(key, 0.5)
+        ax.plot(angles_closed, values_closed,
+                color=self.COLOR_ACCENT, linewidth=2)
+        ax.fill(angles_closed, values_closed,
+                color=self.COLOR_ACCENT, alpha=0.28)
 
-        chosen_rational = self._calculate_rational_quality(chosen_scores)
-        other_rational = self._calculate_rational_quality(other_scores)
-        bias_pressure = self._calculate_bias_pressure()
-        foresight_gap = self._calculate_foresight_gap()
-        fairness_risk = self._calculate_fairness_risk()
-
-        justification_gap = chosen_rational - other_rational
-        weak_choice_penalty = max(0.0, -justification_gap)
-        distortion_risk = self._calculate_distortion_risk(
-            bias_pressure,
-            foresight_gap,
-            fairness_risk,
-            weak_choice_penalty,
-            chosen_rational,
-        )
-
-        practical_preference = self._is_practically_justified(chosen_scores, justification_gap)
-
-        self.total_risk = distortion_risk
-        self.integrity = 1 - distortion_risk
-        self.chosen_rational = chosen_rational
-        self.other_rational = other_rational
-        self.justification_gap = justification_gap
-        self.practical_preference = practical_preference
-
-        self.signal_map = {
-            "Bias Pressure": bias_pressure,
-            "Foresight Gap": foresight_gap,
-            "Fairness Risk": fairness_risk,
-            "Weak Choice Penalty": weak_choice_penalty,
-            "Low Evidence Penalty": (1 - chosen_rational),
-        }
-
-        self.detected_biases = self._detect_bias_patterns()
-
-        self.report()
-
-    # ======================================================
-    # SECTION 8: REPORT TEXT ENGINE (ALL OUTPUT SENTENCES)
-    # ======================================================
-
-    def _summary_lines(self):
-        return [
-            "1) Quick Summary",
-            f"- Overall signal: {classify_risk(self.total_risk)}",
-            f"- Bias risk: {self.total_risk:.2f} | Clarity score: {self.integrity:.2f}",
-            f"- Strength of {self.chosen_label}: {self.chosen_rational:.2f}",
-            f"- Strength of {self.other_label}: {self.other_rational:.2f}",
-            f"- Gap between options: {self.justification_gap:.2f}",
-            "",
-        ]
-
-    def _driver_lines(self):
-        lines = ["3) What is pushing your choice"]
-        items = sorted(self.signal_map.items(), key=lambda item: item[1], reverse=True)[:4]
-        for name, value in items:
-            level = "high" if value >= 0.70 else "moderate" if value >= 0.45 else "low"
-            lines.append(f"- {name}: {value:.2f} ({level} impact)")
-        lines.append("")
-        return lines
-
-    def _interpretation_lines(self):
-        lines = ["6) Plain-English Verdict"]
-        if self.practical_preference:
-            lines.append(
-                f"- Your choice of {self.chosen_label} looks reasonable, not just emotional."
-            )
-            lines.append("- It matches your needs, evidence, and fit with your life.")
-        elif self.justification_gap >= 0:
-            lines.append("- Your choice has some good reasons, but there is also strong pressure.")
-        else:
-            lines.append("- The other option looks stronger on real reasons; this is a warning sign.")
-        lines.append("")
-        return lines
-
-    def _action_protocol_lines(self):
-        lines = ["7) Simple Next Steps"]
-        if self.signal_map["Bias Pressure"] > 0.60:
-            lines.append("- Wait 24 hours, then answer the same questions again with a calm mind.")
-        if self.signal_map["Foresight Gap"] > 0.50:
-            lines.append("- Write a best-case and worst-case story for both options.")
-        if self.signal_map["Fairness Risk"] > 0.50:
-            lines.append("- Check if your choice is respectful to everyone involved.")
-        if self.signal_map["Weak Choice Penalty"] > 0.40:
-            lines.append("- Seriously test the other option before committing.")
-        lines.append("- Re-run BiasLab after you learn 1-2 new facts.")
-        lines.append("")
-        return lines
-
-    def _reflection_lines(self):
-        lines = ["8) Your Notes"]
-        if self.answers.get("counter_text"):
-            lines.append(f"- Strongest counter-argument captured: {self.answers['counter_text']}")
-        if self.answers.get("reason_a"):
-            lines.append(f"- Practical reason for {self.option_a}: {self.answers['reason_a']}")
-        if self.answers.get("reason_b"):
-            lines.append(f"- Practical reason for {self.option_b}: {self.answers['reason_b']}")
-        return lines
-
-    def generate_narrative(self):
-        """Assemble final report text from section-specific text builders."""
-        lines = [
-            "BiasLab Practical Decision Report",
-            "=" * 40,
-            f"Decision: {self.decision}",
-            f"Current leaning: {self.chosen_label}",
-            f"Alternative: {self.other_label}",
-            "",
-        ]
-        lines.extend(self._summary_lines())
-        lines.extend(self._reality_check_lines())
-        lines.extend(self._driver_lines())
-        lines.extend(self._bias_pattern_lines())
-        lines.extend(self._bias_solution_lines())
-        lines.extend(self._interpretation_lines())
-        lines.extend(self._action_protocol_lines())
-        lines.extend(self._reflection_lines())
-        return "\n".join(lines)
-
-    # ======================================================
-    # SECTION 9: OUTPUT VIEWS (REPORT + CHART)
-    # ======================================================
-
-    def report(self):
-        self.clear()
-        tk.Label(self.root, text="Decision Analysis Report", font=("Helvetica", 20, "bold")).pack(pady=10)
-        tk.Label(
-            self.root,
-            text=f"Status: {classify_risk(self.total_risk)} | Distortion Risk: {self.total_risk:.2f}",
-            font=("Helvetica", 12),
-        ).pack(pady=4)
-
-        report_text = self.generate_narrative()
-
-        text_box = tk.Text(self.root, height=27, width=125)
-        text_box.pack(pady=8)
-        text_box.insert(tk.END, report_text)
-        text_box.config(state="disabled")
-
-        button_frame = tk.Frame(self.root)
-        button_frame.pack(pady=8)
-        tk.Button(button_frame, text="Show Bias Radar", command=self.show_radar).pack(side="left", padx=8)
-        tk.Button(button_frame, text="Start New Decision", command=self.intro).pack(side="left", padx=8)
-
-        self.save_session()
-
-    def show_radar(self):
-        """Visual chart of highest-level distortion components."""
-        label_map = {
-            "Bias Pressure": "Pressure / Emotions",
-            "Foresight Gap": "Future Not Considered",
-            "Fairness Risk": "Fairness Risk",
-            "Weak Choice Penalty": "Other Option Looks Stronger",
-            "Low Evidence Penalty": "Low Real Evidence",
-        }
-
-        labels = [label_map.get(key, key) for key in self.signal_map.keys()]
-        values = list(self.signal_map.values())
-
-        values_cycle = values + values[:1]
-        angles = np.linspace(0, 2 * np.pi, len(labels), endpoint=False).tolist()
-        angles_cycle = angles + angles[:1]
-
-        fig, ax = plt.subplots(figsize=(6, 6), subplot_kw={"polar": True})
-        ax.plot(angles_cycle, values_cycle, linewidth=2)
-        ax.fill(angles_cycle, values_cycle, alpha=0.25)
         ax.set_xticks(angles)
-        ax.set_xticklabels(labels)
-        ax.set_ylim(0, 1)
-        plt.title("Decision Pressure Radar")
-        plt.show()
+        ax.set_xticklabels(labels, color=self.COLOR_TEXT, fontsize=9)
+        ax.set_yticks([20, 40, 60, 80, 100])
+        ax.set_yticklabels(["20", "40", "60", "80", "100"],
+                           color=self.COLOR_MUTED, fontsize=8)
+        ax.set_ylim(0, 100)
+        ax.spines["polar"].set_color(self.COLOR_MUTED)
+        ax.grid(color=self.COLOR_MUTED, alpha=0.3)
 
-    # ======================================================
-    # SECTION 10: SESSION PERSISTENCE
-    # ======================================================
+        canvas = FigureCanvasTkAgg(fig, master=self.tab_radar)
+        canvas.draw()
+        canvas.get_tk_widget().pack(fill="both", expand=True,
+                                    padx=10, pady=10)
+        self.radar_canvas = canvas
 
-    def save_session(self):
-        file_name = "biaslab_sessions.csv"
-        now = datetime.datetime.now().isoformat(timespec="seconds")
 
-        needs_header = not os.path.exists(file_name)
-        with open(file_name, "a", newline="", encoding="utf-8") as file:
-            writer = csv.writer(file)
-            if needs_header:
-                writer.writerow(
-                    [
-                        "timestamp",
-                        "decision",
-                        "chosen_option",
-                        "other_option",
-                        "distortion_risk",
-                        "integrity_score",
-                        "chosen_rational",
-                        "other_rational",
-                        "justification_gap",
-                        "practical_preference",
-                    ]
-                )
+# ==========================================================
+# SECTION 9: DEMO ARTICLE - purposely biased, longer + realistic
+# ==========================================================
+# About 430 words, mixes genuinely-newsworthy content with clear
+# bias signals so the demo shows a rich, non-saturated radar.
 
-            writer.writerow(
-                [
-                    now,
-                    self.decision,
-                    self.chosen_label,
-                    self.other_label,
-                    round(self.total_risk, 4),
-                    round(self.integrity, 4),
-                    round(self.chosen_rational, 4),
-                    round(self.other_rational, 4),
-                    round(self.justification_gap, 4),
-                    self.practical_preference,
-                ]
+SAMPLE_TITLE = (
+    "Radical Politicians Slam Patriotic Plan In Shocking Meltdown "
+    "As Critics Seethe"
+)
+
+SAMPLE_BODY = (
+    "In a truly shocking and devastating turn of events, the radical "
+    "left lashed out at a patriotic new plan that traditional values "
+    "voters have been celebrating for weeks. Sources say the outrageous "
+    "response was a catastrophe waiting to happen, while insiders say "
+    "the scandal is only beginning.\n\n"
+    "Experts believe the liberal elite mainstream media will obviously "
+    "try to bury this explosive story, but make no mistake - the "
+    "American people are furious. Critics claim the plan is dangerous, "
+    "but many believe those critics are simply socialist globalists "
+    "pushing a woke agenda. Clearly, the far-right is nothing like what "
+    "the systemic critics pretend.\n\n"
+    "Reportedly, the welfare state crowd has already begun a meltdown, "
+    "slamming anyone who disagrees as an enemy of progress. Undoubtedly, "
+    "this scandal will define the coming weeks as patriots and thugs "
+    "clash in an unbelievable nationwide crackdown.\n\n"
+    "A small number of analysts may point out that the proposal "
+    "actually includes modest tax incentives, a review mechanism and a "
+    "two-year sunset clause. Those details, however, are largely ignored "
+    "by commentators focused on the political showdown. Anonymous "
+    "sources familiar with the matter say the outcome is all but certain, "
+    "and observers note the party leadership has already begun preparing "
+    "talking points for the next news cycle.\n\n"
+    "The bill is scheduled for a committee hearing on Thursday. The "
+    "sponsor's office declined repeated requests for comment, though a "
+    "brief press release confirmed that a formal statement will be "
+    "released after the session. In the meantime, it goes without "
+    "saying that the stakes could not be higher, and anyone can see "
+    "where this story is heading.\n\n"
+    "Meanwhile, a record-breaking number of constituents have called in "
+    "to express their views, with the absolute worst outcome - a full "
+    "stalemate - looking more likely by the hour. Naturally, the "
+    "president's office has declined comment, even as the biggest ever "
+    "lobbying campaign gears up behind the scenes. Historic precedents "
+    "suggest the final vote could go either way, but critics are already "
+    "warning of unprecedented consequences."
+)
+
+
+# ==========================================================
+# SECTION 10: MAIN ENTRY POINT
+# ==========================================================
+
+def main():
+    """Create the root window and start the Tk event loop."""
+    root = tk.Tk()
+    app = BiasLabApp(root)
+    root.mainloop()
+
+
+if __name__ == "__main__":
+    main()
+                   command=self.on_clear).pack(side="left")
+        ttk.Button(btn_row, text="Save to CSV", style="Ghost.TButton",
+                   command=self.on_save).pack(side="right")
+
+    def _build_results_panel(self, parent):
+        """Right column: notebook with Overview / Radar / Flagged / Tips."""
+        panel = tk.Frame(parent, bg=self.COLOR_PANEL)
+        panel.grid(row=0, column=1, sticky="nsew", padx=(8, 0))
+
+        tk.Label(
+            panel, text="2. Bias report",
+            font=("Segoe UI", 13, "bold"),
+            fg=self.COLOR_TEXT, bg=self.COLOR_PANEL,
+        ).pack(anchor="w", padx=14, pady=(14, 4))
+
+        self.tabs = ttk.Notebook(panel)
+        self.tabs.pack(fill="both", expand=True, padx=10, pady=(4, 14))
+
+        # --- Overview tab -------------------------------------
+        self.tab_overview = tk.Frame(self.tabs, bg=self.COLOR_PANEL)
+        self.tabs.add(self.tab_overview, text="Overview")
+
+        self.overview_text = tk.Text(
+            self.tab_overview, wrap="word",
+            font=("Consolas", 10),
+            bg=self.COLOR_PANEL_2, fg=self.COLOR_TEXT,
+            relief="flat", padx=10, pady=10,
+        )
+        self.overview_text.pack(fill="both", expand=True, padx=8, pady=8)
+        # colour tags for nicer overview styling
+        self.overview_text.tag_configure("header", foreground=self.COLOR_ACCENT,
+                                         font=("Consolas", 11, "bold"))
+        self.overview_text.tag_configure("warn",   foreground=self.COLOR_WARN)
+        self.overview_text.tag_configure("good",   foreground=self.COLOR_GOOD)
+        self.overview_text.tag_configure("danger", foreground=self.COLOR_DANGER)
+        self.overview_text.tag_configure("muted",  foreground=self.COLOR_MUTED)
+        self.overview_text.configure(state="disabled")
+
+        # --- Radar tab ----------------------------------------
+        self.tab_radar = tk.Frame(self.tabs, bg=self.COLOR_PANEL)
+        self.tabs.add(self.tab_radar, text="Radar Chart")
+        self.radar_canvas = None
+
+        # --- Flagged words tab --------------------------------
+        self.tab_flagged = tk.Frame(self.tabs, bg=self.COLOR_PANEL)
+        self.tabs.add(self.tab_flagged, text="Flagged Words")
+
+        self.flagged_text = tk.Text(
+            self.tab_flagged, wrap="word",
+            font=("Consolas", 10),
+            bg=self.COLOR_PANEL_2, fg=self.COLOR_TEXT,
+            relief="flat", padx=10, pady=10,
+        )
+        self.flagged_text.pack(fill="both", expand=True, padx=8, pady=8)
+        self.flagged_text.configure(state="disabled")
+
+        # --- Suggestions tab ----------------------------------
+        self.tab_tips = tk.Frame(self.tabs, bg=self.COLOR_PANEL)
+        self.tabs.add(self.tab_tips, text="Suggestions")
+
+        self.tips_text = tk.Text(
+            self.tab_tips, wrap="word",
+            font=("Segoe UI", 11),
+            bg=self.COLOR_PANEL_2, fg=self.COLOR_TEXT,
+            relief="flat", padx=10, pady=10,
+        )
+        self.tips_text.pack(fill="both", expand=True, padx=8, pady=8)
+        self.tips_text.configure(state="disabled")
+
+        self._show_placeholder()
+
+    def _show_placeholder(self):
+        """Friendly hints before the user has clicked Analyze."""
+        placeholder = (
+            "Paste an article on the left, then click  Analyze.\n\n"
+            "BiasLab will:\n"
+            "  * score the text on six bias dimensions\n"
+            "  * draw a radar chart\n"
+            "  * highlight the exact phrases that swayed the score\n"
+            "  * flag clickbait headlines\n"
+            "  * report how confident the analysis is\n"
+            "  * give concrete rewriting tips\n\n"
+            "Tip: hit  Load Sample  for an instant demo."
+        )
+        self._write_plain(self.overview_text, placeholder)
+        self._write_plain(self.flagged_text, "No analysis yet.")
+        self._write_plain(self.tips_text,
+                          "Suggestions appear after you analyze an article.")
+
+    # ==========================================================
+    # BUTTON HANDLERS
+    # ==========================================================
+
+    def on_analyze(self):
+        """Read inputs, run the pipeline, populate all tabs."""
+        title = self.title_entry.get().strip()
+        body  = self.body_text.get("1.0", "end").strip()
+
+        if len(body) < 50:
+            messagebox.showwarning(
+                "Not enough text",
+                "Please paste at least a short paragraph (50+ characters).",
             )
+            return
+
+        report = analyze_article(title, body)
+        self.current_report = report
+        self._show_results(report)
+
+    def on_load_sample(self):
+        """Fill inputs with the built-in biased sample article."""
+        self.title_entry.delete(0, "end")
+        self.title_entry.insert(0, SAMPLE_TITLE)
+        self.body_text.delete("1.0", "end")
+        self.body_text.insert("1.0", SAMPLE_BODY)
+
+    def on_clear(self):
+        """Reset everything."""
+        self.title_entry.delete(0, "end")
+        self.body_text.delete("1.0", "end")
+        self.current_report = None
+        self._show_placeholder()
+        for w in self.tab_radar.winfo_children():
+            w.destroy()
+        self.radar_canvas = None
+
+    def on_save(self):
+        """Persist the most-recent analysis to CSV."""
+        if self.current_report is None:
+            messagebox.showinfo("Nothing to save", "Run an analysis first.")
+            return
+        save_session(self.current_report)
+        messagebox.showinfo(
+            "Saved",
+            f"Analysis appended to {CSV_FILENAME}",
+        )
+
+    # ==========================================================
+    # RENDERING HELPERS
+    # ==========================================================
+
+    def _write_plain(self, widget: tk.Text, message: str):
+        """Replace the contents of a read-only Text widget."""
+        widget.configure(state="normal")
+        widget.delete("1.0", "end")
+        widget.insert("1.0", message)
+        widget.configure(state="disabled")
+
+    def _bar(self, score: float, width: int = 22) -> str:
+        """Tiny ASCII progress bar used in the overview tab."""
+        filled = int(round((score / 100.0) * width))
+        return "[" + "#" * filled + "." * (width - filled) + "]"
+
+    def _show_results(self, report: dict):
+        """Render the full report into every tab."""
+        self._render_overview(report)
+        self._render_flagged(report)
+        self._render_tips(report)
+        self._draw_radar(report["radar_values"], report["radar_labels"])
+
+    def _render_overview(self, report: dict):
+        """Fill the big Overview tab with a pretty text dump."""
+        w = self.overview_text
+        w.configure(state="normal")
+        w.delete("1.0", "end")
+
+        verdict_label, verdict_msg = build_verdict(report["overall_score"])
+        lean_msg = describe_lean(report["political_lean"])
+        conf_msg = describe_confidence(report["confidence"])
+
+        # ---- top box -----
+        title = report["title"] or "(no title supplied)"
+        w.insert("end", "ARTICLE\n", "header")
+        w.insert("end", f"  Title       : {title}\n")
+        w.insert("end", f"  Analyzed on : {report['when']}\n")
+        w.insert("end", f"  Word count  : {report['n_words']}\n")
+        w.insert("end", f"  Confidence  : {report['confidence']:.2f} ({conf_msg})\n\n")
+
+        # ---- verdict -----
+        w.insert("end", "OVERALL\n", "header")
+        w.insert("end", f"  Overall bias score : {report['overall_score']:>5} / 100\n")
+        verdict_tag = ("danger" if report["overall_score"] >= 60
+                       else "warn" if report["overall_score"] >= 30
+                       else "good")
+        w.insert("end", f"  Verdict            : {verdict_label}\n", verdict_tag)
+        w.insert("end", f"    -> {verdict_msg}\n\n", "muted")
+
+        w.insert("end", f"  Political lean     : {report['political_lean']:+.2f}"
+                        f"  ({lean_msg})\n")
+        w.insert("end", f"  Clickbait gap      : {report['clickbait_gap']:>5} / 100"
+                        f"  (title drama {report['title_drama']}, "
+                        f"body drama {report['body_drama']})\n\n")
+
+        # ---- article stats -----
+        s = report["stats"]
+        w.insert("end", "ARTICLE STATS\n", "header")
+        w.insert("end", f"  Paragraphs       : {s['paragraphs']}\n")
+        w.insert("end", f"  Exclamations     : {s['exclamations']}\n")
+        w.insert("end", f"  Questions        : {s['questions']}\n")
+        w.insert("end", f"  ALL-CAPS words   : {s['all_caps_words']}\n")
+        w.insert("end", f"  Quoted segments  : {s['quoted_segments']}\n\n")
+
+        # ---- axis breakdown -----
+        w.insert("end", "AXIS BREAKDOWN  (score, bar, sub-factors)\n", "header")
+        for axis_name, info in report["details"].items():
+            bar = self._bar(info["score"])
+            w.insert("end", f"\n  {axis_name}  {info['score']:>5}  {bar}\n")
+            for key, value in info["sub"].items():
+                pretty_key = key.replace("_", " ")
+                w.insert("end", f"      - {pretty_key}: {value}\n", "muted")
+
+        w.configure(state="disabled")
+
+    def _render_flagged(self, report: dict):
+        """List the phrases that triggered each axis."""
+        lines = []
+        for axis_name, info in report["details"].items():
+            if info["found"]:
+                lines.append(f"{axis_name}  ({info['count']} hits):")
+                lines.append("    " + ", ".join(info["found"]))
+                lines.append("")
+        if not lines:
+            lines = ["No loaded or slanted vocabulary was detected. Nice."]
+        self._write_plain(self.flagged_text, "\n".join(lines))
+
+    def _render_tips(self, report: dict):
+        """List the suggestions."""
+        tips = build_suggestions(report)
+        body = "\n".join(f"{i}. {tip}\n" for i, tip in enumerate(tips, start=1))
+        self._write_plain(self.tips_text, body)
+
+    def _draw_radar(self, values: list, labels: list):
+        """Draw the matplotlib radar chart inside the Radar tab."""
+        # wipe previous chart
+        for w in self.tab_radar.winfo_children():
+            w.destroy()
+
+        fig = Figure(figsize=(5.2, 5.2), dpi=100, facecolor=self.COLOR_PANEL)
+        ax = fig.add_subplot(111, polar=True, facecolor=self.COLOR_PANEL)
+
+        n = len(values)
+        angles = [i / float(n) * 2 * pi for i in range(n)]
+        values_closed = values + values[:1]
+        angles_closed = angles + angles[:1]
+
+        ax.plot(angles_closed, values_closed,
+                color=self.COLOR_ACCENT, linewidth=2)
+        ax.fill(angles_closed, values_closed,
+                color=self.COLOR_ACCENT, alpha=0.28)
+
+        ax.set_xticks(angles)
+        ax.set_xticklabels(labels, color=self.COLOR_TEXT, fontsize=9)
+        ax.set_yticks([20, 40, 60, 80, 100])
+        ax.set_yticklabels(["20", "40", "60", "80", "100"],
+                           color=self.COLOR_MUTED, fontsize=8)
+        ax.set_ylim(0, 100)
+        ax.spines["polar"].set_color(self.COLOR_MUTED)
+        ax.grid(color=self.COLOR_MUTED, alpha=0.3)
+
+        canvas = FigureCanvasTkAgg(fig, master=self.tab_radar)
+        canvas.draw()
+        canvas.get_tk_widget().pack(fill="both", expand=True,
+                                    padx=10, pady=10)
+        self.radar_canvas = canvas
 
 
 # ==========================================================
-# SECTION 11: ENTRY POINT
+# SECTION 9: DEMO ARTICLE - purposely biased, longer + realistic
+# ==========================================================
+# About 430 words, mixes genuinely-newsworthy content with clear
+# bias signals so the demo shows a rich, non-saturated radar.
+
+SAMPLE_TITLE = (
+    "Radical Politicians Slam Patriotic Plan In Shocking Meltdown "
+    "As Critics Seethe"
+)
+
+SAMPLE_BODY = (
+    "In a truly shocking and devastating turn of events, the radical "
+    "left lashed out at a patriotic new plan that traditional values "
+    "voters have been celebrating for weeks. Sources say the outrageous "
+    "response was a catastrophe waiting to happen, while insiders say "
+    "the scandal is only beginning.\n\n"
+    "Experts believe the liberal elite mainstream media will obviously "
+    "try to bury this explosive story, but make no mistake - the "
+    "American people are furious. Critics claim the plan is dangerous, "
+    "but many believe those critics are simply socialist globalists "
+    "pushing a woke agenda. Clearly, the far-right is nothing like what "
+    "the systemic critics pretend.\n\n"
+    "Reportedly, the welfare state crowd has already begun a meltdown, "
+    "slamming anyone who disagrees as an enemy of progress. Undoubtedly, "
+    "this scandal will define the coming weeks as patriots and thugs "
+    "clash in an unbelievable nationwide crackdown.\n\n"
+    "A small number of analysts may point out that the proposal "
+    "actually includes modest tax incentives, a review mechanism and a "
+    "two-year sunset clause. Those details, however, are largely ignored "
+    "by commentators focused on the political showdown. Anonymous "
+    "sources familiar with the matter say the outcome is all but certain, "
+    "and observers note the party leadership has already begun preparing "
+    "talking points for the next news cycle.\n\n"
+    "The bill is scheduled for a committee hearing on Thursday. The "
+    "sponsor's office declined repeated requests for comment, though a "
+    "brief press release confirmed that a formal statement will be "
+    "released after the session. In the meantime, it goes without "
+    "saying that the stakes could not be higher, and anyone can see "
+    "where this story is heading.\n\n"
+    "Meanwhile, a record-breaking number of constituents have called in "
+    "to express their views, with the absolute worst outcome - a full "
+    "stalemate - looking more likely by the hour. Naturally, the "
+    "president's office has declined comment, even as the biggest ever "
+    "lobbying campaign gears up behind the scenes. Historic precedents "
+    "suggest the final vote could go either way, but critics are already "
+    "warning of unprecedented consequences."
+)
+
+
+# ==========================================================
+# SECTION 10: MAIN ENTRY POINT
 # ==========================================================
 
-root = tk.Tk()
-app = BiasLab(root)
-root.mainloop()
+def main():
+    """Create the root window and start the Tk event loop."""
+    root = tk.Tk()
+    app = BiasLabApp(root)
+    root.mainloop()
+
+
+if __name__ == "__main__":
+    main()
