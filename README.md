@@ -12,13 +12,12 @@ ____  _           _          _
 
 ### See the language patterns behind the news.
 
-Paste an article, get a six-axis **Bias Radar**, flagged words, clickbait detection, confidence score, and plain-language tips — all in one local, zero-API Python app.
+Paste an article, get a six-axis **Bias Radar**, flagged words, clickbait detection, a confidence score, and plain-language rewrite tips. Runs 100% locally, no API keys, no internet.
 
 ![Python](https://img.shields.io/badge/Python-3.8%2B-3776AB?style=for-the-badge&logo=python&logoColor=white)
 ![Tkinter](https://img.shields.io/badge/GUI-Tkinter-FFC107?style=for-the-badge)
 ![Matplotlib](https://img.shields.io/badge/Charts-Matplotlib-11557c?style=for-the-badge)
 ![License](https://img.shields.io/badge/license-MIT-green?style=for-the-badge)
-![Status](https://img.shields.io/badge/status-A%2B%2B%20demo%20ready-38bdf8?style=for-the-badge)
 
 </div>
 
@@ -48,36 +47,28 @@ Paste an article, get a six-axis **Bias Radar**, flagged words, clickbait detect
 
 ## What is this, explained to a 5-year-old
 
-> Imagine a news article is a pizza.
+> Think of a news article like a pizza.
 >
-> Sometimes a pizza has normal cheese and tomato. That's plain news.
+> Normal cheese and tomato is plain news. But sometimes a pizza has WAY too
+> much salt, weird sprinkles, and a giant sign on it yelling "BEST PIZZA EVER,
+> EAT IT NOW!!!". That one isn't food anymore, it's a trick.
 >
-> Sometimes a pizza has **way** too much salt, too many sprinkles, and a giant sign
-> that says "BEST PIZZA IN THE WORLD, EAT IT NOW!!!". That pizza is trying to trick
-> your tongue into thinking it's amazing.
->
-> **BiasLab is a little robot that tastes the pizza for you.** It reads the article,
-> notices all the salt and sprinkles and shouting, and draws you a picture showing
-> exactly where the extra stuff is. Then it tells you, plainly:
->
-> _"This is mostly normal pizza."_
-> or
-> _"This pizza is trying really hard to make you feel angry. Maybe go taste a
-> different one before you decide."_
+> BiasLab is a robot that tastes the pizza for you, points at all the extra
+> salt and sprinkles, and tells you whether the sign is lying.
 
-That's it. No ads, no tracking, no "AI magic." Just word-counting and simple math.
+No ads, no tracking, no "AI magic." Just word-counting and some simple math.
 
 ---
 
 ## What is this, explained to a grown-up
 
-**BiasLab v2** is a **Python desktop app** that analyzes a news article and reports
+**BiasLab v2** is a Python desktop app that analyzes a news article and reports
 how neutral its language is. You paste text, click **Analyze**, and you get:
 
 * An **overall bias score** from 0 (reads like straight reporting) to 100 (reads
   like opinion/propaganda).
 * A **six-axis Bias Radar** chart visualizing *where* the bias comes from.
-* A **LEFT ↔ RIGHT political lean** number (-1.00 to +1.00) separate from the
+* A **LEFT <-> RIGHT political lean** number (-1.00 to +1.00) separate from the
   intensity score.
 * A **Clickbait Gap** metric that compares headline drama to body drama.
 * A **Confidence score** that tells you how much to trust the result given how
@@ -125,9 +116,9 @@ your machine.
 '--------------------------------------------------------------------------'
 ```
 
-The **Radar Chart** tab shows a cyan polygon on a polar grid — one corner per
-axis. A perfectly neutral article collapses to a point in the center; a heavily
-biased one puffs out to the edges.
+The **Radar Chart** tab shows a cyan polygon on a polar grid, one corner per
+axis. A neutral article collapses to a dot in the middle; a biased one puffs
+out towards the edges.
 
 ---
 
@@ -136,9 +127,9 @@ biased one puffs out to the edges.
 | Feature | What it does |
 |---|---|
 | **Six-dimension radar** | Visualizes bias across Loaded Language, Sentiment, Subjectivity, Sourcing, Framing, Political Slant. |
-| **Smooth hyperbolic scoring** | Numbers spread naturally across 0–100 instead of saturating to binary 0/100. |
-| **Multi-factor per axis** | Each axis combines 2–4 sub-signals (density, exclamations, ALL-CAPS, hedges, superlatives, quotes). |
-| **Political lean indicator** | Separate LEFT ↔ RIGHT direction from -1.00 to +1.00. |
+| **Smooth hyperbolic scoring** | Numbers spread naturally across 0-100 instead of saturating to binary 0/100. |
+| **Multi-factor per axis** | Each axis combines 2-4 sub-signals (density, exclamations, ALL-CAPS, hedges, superlatives, quotes). |
+| **Political lean indicator** | Separate LEFT <-> RIGHT direction from -1.00 to +1.00. |
 | **Clickbait Gap** | Detects headlines that are way more dramatic than their own article body. |
 | **Confidence score** | Tells you how reliable the analysis is (short articles get a warning). |
 | **Flagged word list** | See the exact phrases that drove each score. |
@@ -152,32 +143,127 @@ biased one puffs out to the edges.
 
 ## Install and run in 30 seconds
 
-**Requirements:** Python 3.8 or newer, and `matplotlib` for the radar chart.
+You need Python 3.8 or newer. Everything else (`matplotlib`, `tkinter`) is
+handled by the commands below. The app runs inside an isolated virtual
+environment (`venv`) so it won't touch your system Python.
 
-```bash
-# 1. Install matplotlib (tkinter ships with Python on Windows/macOS)
-pip install matplotlib
+Grab the block for your OS, paste it into a fresh terminal, and you're done.
+It clones the repo, creates the venv, installs dependencies, and launches the app.
 
-# 2. Launch the app
+### Windows (PowerShell)
+
+```powershell
+git clone https://github.com/notUbaid/BiasLab.git
+cd BiasLab
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+pip install -r requirements.txt
 python biaslab.py
 ```
 
-That's it. A window will open. Click **Load Sample**, then **Analyze** to see it work.
+> If PowerShell blocks the activate script, run once:
+> `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` and try again.
 
-> On some Linux distros, `tkinter` must be installed separately with
-> `sudo apt install python3-tk`.
+### Windows (CMD)
+
+```cmd
+git clone https://github.com/notUbaid/BiasLab.git
+cd BiasLab
+python -m venv .venv
+.venv\Scripts\activate.bat
+python -m pip install --upgrade pip
+pip install -r requirements.txt
+python biaslab.py
+```
+
+### macOS
+
+```bash
+git clone https://github.com/notUbaid/BiasLab.git
+cd BiasLab
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+pip install -r requirements.txt
+python biaslab.py
+```
+
+> macOS ships with Tkinter via the official python.org installer. If you see
+> `ModuleNotFoundError: No module named '_tkinter'`, install Python from
+> [python.org](https://www.python.org/downloads/) (not Homebrew's bare `python`)
+> or run `brew install python-tk`.
+
+### Linux (Debian / Ubuntu)
+
+```bash
+sudo apt update && sudo apt install -y python3 python3-venv python3-tk git
+git clone https://github.com/notUbaid/BiasLab.git
+cd BiasLab
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+pip install -r requirements.txt
+python biaslab.py
+```
+
+### Linux (Fedora / RHEL)
+
+```bash
+sudo dnf install -y python3 python3-virtualenv python3-tkinter git
+git clone https://github.com/notUbaid/BiasLab.git
+cd BiasLab
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+pip install -r requirements.txt
+python biaslab.py
+```
+
+### Linux (Arch)
+
+```bash
+sudo pacman -S --needed python tk git
+git clone https://github.com/notUbaid/BiasLab.git
+cd BiasLab
+python -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+pip install -r requirements.txt
+python biaslab.py
+```
+
+A window should open. Hit **Load Sample**, then **Analyze** and you're good.
+
+### Running it again later
+
+You only create the venv once. Every time after that:
+
+```bash
+# Windows
+cd BiasLab
+.\.venv\Scripts\Activate.ps1
+python biaslab.py
+
+# macOS / Linux
+cd BiasLab
+source .venv/bin/activate
+python biaslab.py
+```
+
+When you're done, type `deactivate` to leave the venv.
 
 ---
 
 ## How to operate the app
 
-### Step 1 — paste the article
+### Step 1 - paste the article
 
 * **Headline / title** field: paste the article's title or headline. Optional, but
   it unlocks the Clickbait Gap metric.
 * **Article body** box: paste the full article text. Minimum ~50 characters.
 
-### Step 2 — click **Analyze**
+### Step 2 - click **Analyze**
 
 The right side fills with a report across four tabs:
 
@@ -188,12 +274,12 @@ The right side fills with a report across four tabs:
 | **Flagged Words** | Which phrases triggered which axis, grouped and sorted. |
 | **Suggestions** | Concrete rewrite tips chosen based on the highest-scoring axes. |
 
-### Step 3 — optional actions
+### Step 3 - optional actions
 
-* **Load Sample** — fills the input fields with a purposely-biased article so you
+* **Load Sample** - fills the input fields with a purposely-biased article so you
   can demo the app instantly.
-* **Clear** — wipes everything and resets the report panels.
-* **Save to CSV** — appends the current analysis as one row to
+* **Clear** - wipes everything and resets the report panels.
+* **Save to CSV** - appends the current analysis as one row to
   `biaslab_sessions.csv` in the project folder.
 
 ---
@@ -211,7 +297,7 @@ scandal, meltdown_ trigger this axis.
 ### 2. Sentiment Imbalance
 Is the emotional tone lopsided positive or lopsided negative?
 **Formula:** `imbalance_ratio × confidence × 100`, where `imbalance_ratio =
-|positive − negative| / total_sentiment_words` and `confidence` scales with how
+|positive - negative| / total_sentiment_words` and `confidence` scales with how
 many sentiment words appear per 1000 words.
 
 ### 3. Subjectivity
@@ -235,7 +321,7 @@ _worst, unprecedented, record-breaking, biggest ever_.
 
 ### 6. Political Slant
 How ideologically loaded is the vocabulary overall? This axis reports *intensity*
-(0–100). The *direction* is reported separately as Political Lean below.
+(0-100). The *direction* is reported separately as Political Lean below.
 Left-coded vocab: _progressive, marginalized, systemic, far-right, corporate greed_.
 Right-coded vocab: _woke, liberal elite, socialist, patriot, open borders_.
 
@@ -243,8 +329,8 @@ Right-coded vocab: _woke, liberal elite, socialist, patriot, open borders_.
 
 ## Extra signals (not on the radar)
 
-### Political Lean  (−1.00 .. +1.00)
-* −1.00 = all loaded words used are left-coded
+### Political Lean  (-1.00 .. +1.00)
+* -1.00 = all loaded words used are left-coded
 * 0.00 = balanced or no loaded vocab
 * +1.00 = all loaded words used are right-coded
 
@@ -254,14 +340,14 @@ _Roughly centered_, _Moderate/Strong RIGHT lean_.
 ### Clickbait Gap  (0 .. 100)
 Compares the drama-density of the **headline** versus the drama-density of the
 **body**. A score above ~40 means the headline is significantly more dramatic
-than the story actually justifies — the classic clickbait pattern.
+than the story actually justifies - the classic clickbait pattern.
 
 ### Confidence  (0.0 .. 1.0)
 Grows with article length using the same smooth curve used for scoring.
-* ~100 words → 0.33 (LOW confidence, treat results as suggestive)
-* ~300 words → 0.60 (MEDIUM)
-* ~600 words → 0.75 (HIGH)
-* ~1000 words → 0.83 (HIGH)
+* ~100 words -> 0.33 (LOW confidence, treat results as suggestive)
+* ~300 words -> 0.60 (MEDIUM)
+* ~600 words -> 0.75 (HIGH)
+* ~1000 words -> 0.83 (HIGH)
 
 ### Article stats
 Raw counts surfaced in the Overview tab: paragraphs, exclamation marks, question
@@ -273,9 +359,9 @@ marks, ALL-CAPS words, and properly-quoted segments.
 
 Every axis follows the same three-step recipe:
 
-1. **Count** signal phrases using regex word boundaries.
-2. **Convert to density** per 1000 words so long and short articles are comparable.
-3. **Smooth to 0–100** using a hyperbolic curve.
+1. Count signal phrases using regex word boundaries.
+2. Convert to a density per 1000 words so short and long articles are comparable.
+3. Smooth that density to 0-100 with a hyperbolic curve.
 
 The smoothing function is the heart of v2:
 
@@ -296,17 +382,15 @@ This curve gives:
 | 9 × half_point | 90 |
 | ∞ | approaches 100 but never reaches |
 
-So a moderately biased article scores in the 40–60 range, a heavily biased one
-in the 70–85 range, and a neutral one near 0 — **no more all-or-nothing
-saturation**. The `half_point` is tuned per axis in the config section of
+Moderately biased articles land in the 40-60 range, heavy stuff sits around
+70-85, and genuine neutral copy stays near 0. No more all-or-nothing
+saturation. The `half_point` is tuned per axis in the config block of
 `biaslab.py`.
 
-Sub-signals inside each axis are combined with a **weighted average** (weights
-shown in the metric docstrings). Hedging words apply a **subtractive bonus**
-that reduces Subjectivity. Quoted speech applies a **subtractive bonus** that
-reduces Source Opacity.
-
-The final overall score is the simple mean of the six axis scores.
+Sub-signals inside an axis are combined with a weighted average (the weights
+are in the docstrings). Hedging words subtract points from Subjectivity, and
+quoted speech subtracts from Source Opacity. The final overall score is just
+the mean of the six axis scores.
 
 ---
 
@@ -338,7 +422,7 @@ the simple truth
 </details>
 
 <details>
-<summary><b>Hedge markers (good — reduces Subjectivity)</b></summary>
+<summary><b>Hedge markers (good - reduces Subjectivity)</b></summary>
 
 ```
 may, might, could, appears, seems, likely, possibly, perhaps, apparently,
@@ -456,9 +540,9 @@ HALF_CLICKBAIT_GAP  = 40.0
 HALF_CONFIDENCE     = 200.0
 ```
 
-* **Smaller number** → the axis is more sensitive, a little signal moves the
+* **Smaller number** -> the axis is more sensitive, a little signal moves the
   score a lot.
-* **Bigger number** → the axis is less sensitive, signal has to be really
+* **Bigger number** -> the axis is less sensitive, signal has to be really
   strong to move the needle.
 
 You can also extend the lexicons directly. For example, to teach the analyzer
@@ -477,6 +561,7 @@ The changes take effect the next time you run the app.
 ```
 BiasLab/
 ├── biaslab.py                 <- the whole application (one file, heavily commented)
+├── requirements.txt           <- pip dependency list (matplotlib)
 ├── biaslab_sessions.csv       <- written at runtime when you click "Save to CSV"
 ├── README.md                  <- you are here
 └── .gitignore
@@ -490,10 +575,10 @@ Inside `biaslab.py` the 10 sections are:
 | 2 | Configuration | Lexicons, half-points, radar labels, verdict thresholds |
 | 3 | Text helpers | normalize, word count, phrase counting, smooth_score, stats |
 | 4 | Metric functions | Six scoring functions + clickbait_gap + confidence |
-| 5 | Aggregator | `analyze_article()` — runs everything, returns one dict |
+| 5 | Aggregator | `analyze_article()`: runs everything, returns one dict |
 | 6 | Verdict & tips | Label, lean description, suggestion builder |
 | 7 | CSV logging | Ensure-exists + append-one-row |
-| 8 | Tkinter GUI | `BiasLabApp` class — window, tabs, handlers, radar draw |
+| 8 | Tkinter GUI | `BiasLabApp` class: window, tabs, handlers, radar draw |
 | 9 | Demo article | Long, mixed-signal sample for instant class demos |
 | 10 | main() | Starts the Tk event loop |
 
@@ -568,10 +653,10 @@ Every number is explainable.
 <details>
 <summary><b>Is this real AI / machine learning?</b></summary>
 
-No, and that's on purpose. BiasLab uses curated lexicons plus simple math
-(counting, density, a hyperbolic smoothing curve, weighted averages). This
-keeps the code small, auditable, and easy to defend in a class presentation.
-A machine-learning classifier could be swapped in later as a drop-in
+Nope, and that's on purpose. BiasLab uses curated lexicons and simple math
+(counting, density, a hyperbolic smoothing curve, weighted averages). That
+keeps the code small, auditable, and something I can actually defend in
+a presentation. An ML classifier could slot in later as a drop-in
 replacement for the six scoring functions.
 </details>
 
@@ -596,7 +681,7 @@ No. Everything runs locally in Python. The only file written is
 
 Because the scores depend on the article you paste. Two different articles
 will produce two different radars. If you paste the same article, the
-results will be identical every time — the analyzer is fully deterministic.
+results will be identical every time - the analyzer is fully deterministic.
 </details>
 
 <details>
@@ -612,7 +697,7 @@ language is as easy as translating each lexicon list.
 
 Because one or two sentiment words in a very short article can spike the
 per-1000-word density. This is exactly why the app reports a **Confidence**
-score — short articles get LOW confidence, which means "treat these numbers
+score - short articles get LOW confidence, which means "treat these numbers
 as suggestive, not conclusive."
 </details>
 
@@ -621,7 +706,7 @@ as suggestive, not conclusive."
 
 There is no upper limit. Tkinter's text widget handles very long articles
 fine. The scoring is density-based, so a 5000-word article is handled
-exactly like a 500-word one — just with higher confidence.
+exactly like a 500-word one - just with higher confidence.
 </details>
 
 <details>
@@ -630,54 +715,53 @@ exactly like a 500-word one — just with higher confidence.
 Yes. Open `biaslab.py`, find the lexicon list in Section 2, and append your
 phrase. Multi-word phrases (like `"according to"`) work exactly the same as
 single words because regex word boundaries handle both. No other changes
-are needed — save the file and rerun.
+are needed - save the file and rerun.
 </details>
 
 ---
 
 ## Limitations and honest disclaimers
 
-* **Language-only.** BiasLab cannot verify facts, sources, or images.
-* **Bag-of-phrases.** The analyzer doesn't understand context. Sarcasm, quoting
-  biased phrases to criticize them, and sophisticated rhetoric can fool it.
-* **Curated lexicons.** The word lists reflect their authors' judgment. They
-  are a starting point, not a final ground truth.
-* **English only.**
-* **No causality claims.** A high score doesn't mean the *author* is biased —
-  only that the *language* is loaded.
+A few things BiasLab cannot do, and I want to be upfront about them:
 
-Use BiasLab as a **magnifying glass**, not a **judge**.
+* **Language only.** It cannot verify facts, sources, or images.
+* **Bag of phrases.** The analyzer doesn't understand context. Sarcasm,
+  quoting biased phrases to criticize them, and clever rhetoric can fool it.
+* **Curated lexicons.** The word lists reflect my judgment. They're a
+  starting point, not a final ground truth. Extend them as needed.
+* **English only.**
+* **No causality claims.** A high score doesn't mean the *author* is biased,
+  only that the *language* is loaded. Those are different things.
+
+Treat BiasLab like a magnifying glass, not a judge.
 
 ---
 
 ## Roadmap
 
-Planned improvements (good ideas for v3):
+Stuff I want to build for v3 when I get around to it:
 
-- [ ] Per-paragraph heatmap: highlight the article text itself with colored
+- [ ] Per-paragraph heatmap. Highlight the article text itself with colored
       underlines for each flagged phrase.
-- [ ] Side-by-side comparison: paste two articles about the same story and
-      compare their radars.
-- [ ] Export report as PDF or PNG.
+- [ ] Side-by-side comparison. Paste two articles about the same story and
+      diff their radars.
+- [ ] Export a full report as PDF or PNG.
 - [ ] Pluggable language packs (`biaslab_es.py`, `biaslab_fr.py`).
-- [ ] A small ML layer on top (still optional) for sarcasm and irony handling.
-- [ ] URL fetcher: paste a link, BiasLab pulls the text automatically.
+- [ ] Small optional ML layer for sarcasm and irony.
+- [ ] URL fetcher: paste a link, BiasLab scrapes the text itself.
 
 ---
 
 ## Credits
 
-* Built by **Ubaid** as a class project, version 2.0.
-* The six-axis taxonomy is inspired by media-literacy research from
-  organizations such as AllSides, Ad Fontes Media, and the News Literacy
-  Project, adapted and simplified for educational use.
-* The smoothing curve is the classic Michaelis-Menten shape
-  (`V / (V + K)`), repurposed from chemistry to do nice bias scoring.
+Built by **Ubaid**, class project, version 2.0.
 
----
+The six-axis taxonomy borrows loosely from media-literacy work by AllSides,
+Ad Fontes Media, and the News Literacy Project, simplified for something I
+could actually explain in a 5-minute demo. The smoothing curve is the
+Michaelis-Menten shape (`V / (V + K)`) that I stole from a chemistry class
+because it behaves nicely for scoring.
 
-<div align="center">
-
-_If BiasLab helped you read the news a little smarter, that's the whole point._
+If BiasLab helps you read the news a little smarter, that's the whole point.
 
 </div>
