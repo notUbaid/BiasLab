@@ -67,7 +67,18 @@ class BiasLabApp:
 
     def _render(self, r: dict):
         [w.destroy() for w in self.tSum.winfo_children()]
-        tk.Label(self.tSum, text=f"Overall: {r['overall_score']:.1f}/100", fg="#4ade80", bg="#1e293b", font=("Segoe UI", 24)).pack(pady=20)
+        
+        color = "#ef4444" if r['overall_score'] >= 60 else "#f59e0b" if r['overall_score'] >= 40 else "#4ade80"
+        tk.Label(self.tSum, text=f"Overall: {r['overall_score']:.1f}/100", fg=color, bg="#1e293b", font=("Segoe UI", 24)).pack(pady=(20, 5))
+        
+        cz = r.get("confidence_zone", "HIGH")
+        v_title, v_desc = build_verdict(r["overall_score"], cz)
+        
+        tk.Label(self.tSum, text=v_title, fg=color, bg="#1e293b", font=("Segoe UI", 16, "bold")).pack(pady=5)
+        tk.Label(self.tSum, text=v_desc, fg="white", bg="#1e293b", font=("Segoe UI", 12), wraplength=400).pack(pady=5)
+        
+        tk.Label(self.tSum, text=f"Lean: {describe_lean(r.get('political_lean', 0.0))}", fg="#94a3b8", bg="#1e293b", font=("Segoe UI", 11)).pack(pady=(15, 2))
+        tk.Label(self.tSum, text=f"Confidence: {describe_confidence(r.get('confidence', 1.0), cz)}", fg="#94a3b8", bg="#1e293b", font=("Segoe UI", 11)).pack(pady=2)
         
         self.tEvd.config(state="normal"); self.tEvd.delete("1.0", "end"); self.tEvd.insert("1.0", build_evidence_summary(r)); self.tEvd.config(state="disabled")
         self.tTip.config(state="normal"); self.tTip.delete("1.0", "end"); self.tTip.insert("1.0", "\n".join(build_suggestions(r))); self.tTip.config(state="disabled")
@@ -77,7 +88,9 @@ class BiasLabApp:
         v, l = r["radar_values"], r["radar_labels"]
         a = [i/len(v)*2*pi for i in range(len(v))]
         ax.plot(a+[a[0]], v+[v[0]], color="#38bdf8", lw=2); ax.fill(a+[a[0]], v+[v[0]], color="#38bdf8", alpha=0.3)
-        ax.set_xticks(a); ax.set_xticklabels([x.replace("\n", " ") for x in l], color="white", fontsize=8)
+        ax.set_xticks(a); ax.set_xticklabels([x for x in l], color="white", fontsize=8)
+        ax.set_ylim(0, 100); ax.set_yticks([20, 40, 60, 80]); ax.set_yticklabels(["20", "40", "60", "80"], color="#64748b", fontsize=7)
+        ax.grid(color="#334155", linewidth=1, alpha=0.7); ax.spines["polar"].set_color("#334155")
         canv = FigureCanvasTkAgg(fig, master=self.tRad); canv.draw(); canv.get_tk_widget().pack(fill="both")
 
 def main(): root = tk.Tk(); app = BiasLabApp(root); root.mainloop()

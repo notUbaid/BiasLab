@@ -7,28 +7,28 @@
 
 **[Visual Idea: Start with the BiasLab GUI open on screen. Keep a browser window nearby with a news article.]**
 
-**"Welcome to BiasLab v3."**
-* **The Pitch:** We are surrounded by news, but it's getting harder to separate objective reporting from sensational framing and hidden agendas. BiasLab is a 100% offline, locally run Python desktop app that acts as an X-Ray for the news. You paste an article in, and it visualizes the *hidden language patterns* that indicate bias.
+**"Welcome to BiasLab."**
+* **The Pitch:** We are inundated with media narratives, making it challenging to isolate objective reporting from sensational framing and subjective slant. BiasLab is an advanced, fully localized Python NLP engine that acts as a diagnostic X-Ray for text. Simply provide an article, and it visualizes the *underlying lexical heuristics and structural patterns* that indicate bias.
 * **Demo:** *[Copy an article into the app and hit Analyze]*
-  * Explain the **Bias Radar**: It plots bias across 6 dimensions (Loaded Language, Sentiment, Subjectivity, Sourcing, Framing, Slant). 
-  * Show the **Overall Score** and **Confidence Zone**. 
-  * Show the **Evidence Tab**: Highlight how every single score is backed by transparent, sentence-by-sentence evidence.
+  * Observe the **Multi-Dimensional Bias Radar**: It plots bias across 6 distinct NLP vectors (Loaded Language, Sentiment, Subjectivity, Sourcing, Framing, Slant). 
+  * Highlight the **Overall Score** and **Confidence Zone**. 
+  * Transition to the **Evidence Tab**: Emphasize how every single score is fully deterministic and backed by transparent, sentence-by-sentence analytical evidence.
 
-**The Problem with Version 2:**
-* Early versions of this tool were "dumb word counters." They just looked for words like "terrible" or "disastrous."
-* **The Flaw:** If a completely neutral reporter writes: *The President said, "This is a terrible disaster"*, the old tool would flag the article as heavily biased. It failed on **quotes**, **negations** ("not terrible"), and **attribution** ("he claimed").
-* **The Solution (v3):** We completely overhauled the architecture from a 2,000-line monolithic script into a sleek, modular Python package. BiasLab v3 uses NLTK and regex algorithms to understand *context*, eliminating false positives. 
+**The Architecture Challenge:**
+* Standard analysis tools are effectively "naive bag-of-words classifiers." They indiscriminately flag words like "terrible" or "disastrous."
+* **The Flaw:** If a completely neutral reporter writes: *The President said, "This is a terrible disaster"*, legacy approaches severely penalize the article. They fail on **quotes**, **negation scopes** ("not terrible"), and **attribution clauses** ("he claimed").
+* **The Solution:** We architected BiasLab into a sleek, modular Python package. BiasLab utilizes the robust `NLTK` library coupled with regex-driven algorithmic contexts to understand *syntactic boundaries*, completely eliminating naive false positives. 
 
 ---
 
-## Part 2: How It Works & Architecture Overview (2:00 - 3:00)
+## Part 2: Architectural Overview (2:00 - 3:00)
 
 **[Visual Idea: Show a simple block diagram or file tree of the `biaslab/` directory on screen]**
 
-* **Offline & Rule-Based:** Why not use ChatGPT/LLMs? Because LLMs are black boxes, require internet, cost money, and hallucinate. BiasLab relies on strict linguistic rules, transparent regular expressions, and hyperbolic math. You can explain exactly *why* a score is what it is.
-* **The 4-Stage Pipeline:** The entire system runs sequentially through four main stages: Preprocessing, Feature Extraction, Scoring, and Output Generation. 
+* **Deterministic vs. Generative:** Why avoid LLMs (like ChatGPT)? LLMs are non-deterministic black boxes prone to hallucination, requiring API dependencies and high inference costs. BiasLab relies on strict linguistic taxonomies, deterministic evaluation, and hyperbolic smoothing mathematics. Every single decimal point on the radar is mathematically justifiable and fully explicable.
+* **The 4-Stage NLP Pipeline:** Processing occurs sequentially via a 4-tier pipeline: Context Preprocessing, Feature Matrix Extraction, Hyperbolic Scoring, and Insights Generation. 
 
-Let's dive into the code and see exactly what each Python file is doing.
+Let's dissect the repository and see how each module coordinates.
 
 ---
 
@@ -36,34 +36,34 @@ Let's dive into the code and see exactly what each Python file is doing.
 
 **[Visual Idea: Open up an IDE (VSCode/PyCharm) and walk through the actual files one by one]**
 
-### 1. `config.py` (The Brains / Lexicon)
-* **What it does:** This file holds all our constant arrays and tuning dials. 
-* **How it works:** It contains categorized lists of words. For example, `SENSATIONAL_WORDS` ("bombshell", "devastating") or `WEASEL_SIGNALS` ("experts say", "sources claim"). 
-* **Why it matters:** This acts as the transparent "explanation layer." If the app flags something, it's because it was in this configurable list.
+### 1. `config.py` (The Lexical Taxonomies)
+* **What it does:** This module houses our constant schemas and hyperparameter tuning dials. 
+* **How it works:** It stores categorized embeddings of indicator phrases. Examples include `SENSATIONAL_WORDS` ("bombshell") or `WEASEL_SIGNALS` ("experts say"). 
+* **Why it matters:** This acts as the foundational explanation matrix. Our classifications are drawn directly from these rigid, tunable linguistic mappings.
 
 ### 2. `preprocessing.py` (Stage A: Context Builder)
-* **What it does:** This is where raw text becomes manageable data. It uses the `NLTK` library to intelligently split an article into an array of `AnnotatedSentence` dataclass objects.
-* **How it works:** Before any scoring happens, we use complex regex boundaries to scan the sentence. 
-  * We map out **Quoted Spans** (e.g. indices 10 to 45 are inside quotation marks). 
-  * We look for **Attribution Verbs** ("stated", "warned", "claimed").
-  * We look for **Negation words** ("not", "never").
-* **The Result:** The downstream scorers don't just get text; they get a sentence *and* a flag telling them if that sentence is a quote or if it's negated.
+* **What it does:** Transforms raw unstructured text into structured, manageable arrays. We utilize `NLTK` to accurately segment text down to an `AnnotatedSentence` dataclass construct.
+* **How it works:** Before any scoring is executed, sophisticated boundary scans map the environment:
+  * **Quote Segmentation:** Precisely indexing spans representing direct discourse.
+  * **Attribution Resolution:** Identifying speech-act verbs ("stated", "warned") that project a subject's statement.
+  * **Negation Scopes:** Locating structural negation ("not", "never") and identifying its blast radius.
+* **The Result:** Downstream extractors are fed context-rich nodes rather than raw strings, enabling fully context-aware NLP tokenization.
 
-### 3. `features.py` (Stage B: Feature Extraction)
-* **What it does:** This file searches the sentences against the lexicons from `config.py`, but applies our **Context Weights**.
+### 3. `features.py` (Stage B: Feature Matrix Extraction)
+* **What it does:** Maps sentences against the `config.py` lexicons while applying localized **Context Modifiers**.
 * **How it works:** 
-  * Normal text (Author Voice) gets a weight of `1.0`.
-  * If a match happens inside a quoted span generated by `preprocessing.py`, it gets excluded entirely or heavily discounted (`0.15` weight). 
-  * If the word "bad" is found, but the negation script saw the word "not" three words prior, it discounts the hit (`0.20` weight).
-* **The Magic:** This entirely eliminates the false-positive problem from v2.
+  * Intrinsic Author Voice receives a nominal weight of `1.0`.
+  * Matches occurring within `preprocessing.py`'s quoted spans are violently discounted by an `0.15` coefficient because a reporter quoting someone else is not bias natively.
+  * If the word "bad" surfaces, but is intercepted by a preceding negation scope, the hit is discounted to a `0.20` coefficient.
+* **The Engineering Breakthrough:** This pipeline mathematically nullifies the false-positive limitations typical of standard NLP sentiment packages.
 
-### 4. `scorer.py` & `confidence.py` (Stage C & D: The Math)
-* **What it does:** Converts raw feature counts into standard 0-100 radar metrics.
+### 4. `scorer.py` & `confidence.py` (Stage C & D: The Algorithm)
+* **What it does:** Normalizes raw extraction matrices into standardized 0-100 radar vectors.
 * **How it works (`scorer.py`):** 
-  * We calculate **Density per 1000 words**. We don't just use raw counts, because long articles would always score higher. 
-  * We use a **Hyperbolic Smoothing Curve**. `Score = 100 * (value / (value + half_constant))`. This means the score smoothly approaches 100 but never suddenly peaks, preventing the system from breaking on highly emotional pieces. 
+  * Analysis rests on **Density per 1000 words**, thereby neutralizing length bias between articles. 
+  * We process scores through a **Hyperbolic Smoothing Curve** `Score = 100 * (val / (val + K))`. This ensures asymptotic normalization mapping gracefully to `100`, eliminating mathematical saturation breaking the scale on highly emotional pieces.
 * **How it works (`confidence.py`):**
-  * We don't just generate a score; we tell the user if the score is trustworthy. The engine checks five signals: article length, sentence agreement matrix (is the bias everywhere or just in one paragraph?), density, axis agreement, and quote saturation. It calculates an **Uncertainty Zone** (`LOW`, `MEDIUM`, `HIGH`).
+  * It employs a sophisticated Multi-Signal Assessment involving article length vector dimensions, evidence density bounds, and quote-saturation limits to output an explicit **Uncertainty Zone** (`LOW`, `MEDIUM`, `HIGH`). We don't just output data; we measure data reliability.
 
 ### 5. `explain.py`, `export.py`, and `gui.py` (The Output)
 * **`explain.py`:** Takes the raw math metrics and generates English suggestions (e.g. *"Replace dramatic words with plain facts"*).
@@ -74,13 +74,13 @@ Let's dive into the code and see exactly what each Python file is doing.
 
 ## Part 4: Conclusion (8:30 - 10:00)
 
-**[Visual Idea: Cut back to the GUI, specifically pointing at the Evidence Tab to show transparency]**
+**[Visual Idea: Cut back to the GUI, specifically showcasing the precision of the Evidence Tab]**
 
-**Summary:**
-* BiasLab v3 isn't just a word counter. It is a highly optimized, modular Python engine that utilizes sentence tokenization, quote mapping, and hyperbolic density smoothing to analyze text contextually.
-* **Key Takeaway:** AI is amazing, but sometimes you don't need a massive black-box neural net. For media literacy, **transparency is key**. Because BiasLab uses strict rules and math, it can explicitly justify every single point on its radar, teaching users exactly *how* journalists frame the news.
+**Architectural Summary:**
+* BiasLab transcends naive word counting. It is a highly optimized, modular Python engine leveraging sentence tokenization, quote mapping, and hyperbolic density smoothing to execute rigorous contextual NLP analysis.
+* **Key Takeaway:** Generative AI solutions are impressive, but deeply analytical problem sets require **transparent determinism**. Because BiasLab strictly enforces linguistic taxonomies mapped to geometric math curves, it can explicitly justify every single axis on its radar. We eliminate black boxes and offer surgical transparency.
 
 **Call to Action:**
-* The codebase is incredibly easy to contribute to. If you want to add new lexicons or adjust the math, just open `config.py`—no machine learning experience needed.
+* The architecture provides an exceptionally manageable surface. Introducing new classification schema or adapting the hyperbolic math is an entirely decoupled process via `config.py`.
 
 *(End Video)*

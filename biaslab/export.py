@@ -15,7 +15,7 @@ def save_session(r: dict):
     if not os.path.exists(CSV_FILENAME) or os.path.getsize(CSV_FILENAME) == 0:
         with open(CSV_FILENAME, "w", newline="", encoding="utf-8") as f: csv.writer(f).writerow(CSV_COLUMNS)
     v_lbl, _ = build_verdict(r["overall_score"], r.get("confidence_zone", "HIGH"))
-    row = [r["when"], r["title"][:80], r["n_words"], r["confidence"], r.get("confidence_zone", ""), r["overall_score"], v_lbl, r["political_lean"], r["clickbait_gap"], r["details"]["Loaded Language "]["score"], r["details"]["Sentiment Imbalance "]["score"], r["details"]["Subjectivity "]["score"], r["details"]["Source Opacity "]["score"], r["details"]["Sensational Framing "]["score"], r["details"]["Political Slant "]["score"], r.get("context_summary", {}).get("sentences_analyzed", 0), r.get("context_summary", {}).get("hits_excluded_quoted", 0), r.get("context_summary", {}).get("hits_negated", 0)]
+    row = [r["when"], r["title"][:80], r["n_words"], r["confidence"], r.get("confidence_zone", ""), r["overall_score"], v_lbl, r["political_lean"], r["clickbait_gap"], r["details"]["Loaded Language"]["score"], r["details"]["Sentiment Imbalance"]["score"], r["details"]["Subjectivity"]["score"], r["details"]["Source Opacity"]["score"], r["details"]["Sensational Framing"]["score"], r["details"]["Political Slant"]["score"], r.get("context_summary", {}).get("sentences_analyzed", 0), r.get("context_summary", {}).get("hits_excluded_quoted", 0), r.get("context_summary", {}).get("hits_negated", 0)]
     with open(CSV_FILENAME, "a", newline="", encoding="utf-8") as f: csv.writer(f).writerow(row)
 
 def export_report_pdf(r: dict, path: str):
@@ -31,10 +31,11 @@ def export_report_pdf(r: dict, path: str):
         
         ax_r = fig.add_subplot(gs[0, 1], polar=True); vals, lbls = r["radar_values"], r["radar_labels"]
         angs = [i/len(vals) * 2 * pi for i in range(len(vals))]
-        ax_r.plot(angs+[angs[0]], vals+[vals[0]], color="#2563eb", linewidth=1.8)
-        ax_r.fill(angs+[angs[0]], vals+[vals[0]], color="#2563eb", alpha=0.22)
-        ax_r.set_xticks(angs); ax_r.set_xticklabels([l.replace("\n"," ") for l in lbls], fontsize=7)
-        ax_r.set_yticks([25, 50, 75]); ax_r.set_ylim(0, 100)
+        ax_r.plot(angs+[angs[0]], vals+[vals[0]], color="#2563eb", linewidth=2.0)
+        ax_r.fill(angs+[angs[0]], vals+[vals[0]], color="#2563eb", alpha=0.25)
+        ax_r.set_xticks(angs); ax_r.set_xticklabels([l for l in lbls], fontsize=8, color="#0f172a", fontweight="bold")
+        ax_r.set_ylim(0, 100); ax_r.set_yticks([20, 40, 60, 80]); ax_r.set_yticklabels(["20", "40", "60", "80"], color="#94a3b8", fontsize=7)
+        ax_r.grid(color="#cbd5e1", linewidth=1, alpha=0.8); ax_r.spines["polar"].set_color("#cbd5e1")
         
         ax_b = fig.add_subplot(gs[3, :]); ax_b.axis("off")
         ax_b.barh(list(range(len(lbls)))[::-1], [r["details"][l.replace("\n"," ")]["score"] for l in lbls], color="#2563eb")
