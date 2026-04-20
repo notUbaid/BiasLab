@@ -70,16 +70,12 @@ import csv
 import os
 import re
 import tkinter as tk
-import traceback
 from datetime import datetime
 from math import pi
-from tkinter import ttk, messagebox, scrolledtext, filedialog
+from tkinter import ttk, messagebox, scrolledtext
 
-import matplotlib
-matplotlib.use("TkAgg")  # force the Tk backend for embedded charts
-import matplotlib.patches as mpatches
+import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
-from matplotlib.backends.backend_pdf import PdfPages
 from matplotlib.figure import Figure
 
 
@@ -149,10 +145,14 @@ ABSOLUTE_WORDS = [
     "head and shoulders above", "appears unstoppable", "there can be no doubt",
     "cannot be denied", "stands alone", "the truth is",
     # --- soft-assertion propaganda (hidden confidence) ---
+    "remains positive", "remain positive", "outlook remains",
+    "the long-term outlook", "much will depend", "much depends",
     "what cannot be ignored", "what is clear",
+    "the reality is", "the reality remains",
     "firmly at the center", "firmly placed",
     "has succeeded in", "succeeded in placing",
     "direction of policy", "direction of travel",
+    "reflects months of", "months of consultation",
     # --- "self-evident virtue" soft-assertions ---
     "exactly what", "exactly what citizens", "exactly what the country",
     "stands out for", "stands out as", "stands apart",
@@ -189,14 +189,24 @@ POSITIVE_WORDS = [
     "milestone", "boost", "boosted", "soar", "soared", "surge", "surged",
     "rally", "rallied", "gains", "welcomed", "applauded",
     # --- aspirational / approval vocabulary ---
-    "prosperity", "prosperous", "confidence",
+    "prosperity", "prosperous", "stability", "stable", "confidence",
     "optimism", "optimistic", "appreciation", "appreciated", "pride",
-    "proud", "ambition", "ambitious",
+    "proud", "ambition", "ambitious", "clarity", "momentum",
     "admiration", "admired", "foresight", "renewal", "resurgent",
     "resurgence", "flourish", "flourishing", "empowered", "empowerment",
     # --- soft-pump vocabulary (subtle positive framing) ---
     "encouraging", "encouraged", "cautious optimism", "gains traction",
-    "gaining traction", "promising", "widely praised",
+    "gaining traction", "attractive", "increasingly attractive",
+    "engaged", "engaging", "evolving", "unlock", "unlocks", "unlocking",
+    "streamline", "streamlining", "streamlined", "simplify",
+    "simplifying", "simplified", "efficiency", "efficient", "effective",
+    "opportunity", "opportunities", "potential", "promising",
+    "willingness", "willing", "interest", "noticeable interest",
+    "improving", "improved", "expanding", "expanded", "growth",
+    "beneficial", "benefits", "benefit", "remains positive",
+    "long-term outlook", "bright outlook", "favorable", "favourable",
+    "robust", "resilient", "resilience", "stronger", "stronghold",
+    "attractive destination", "widely praised",
     # --- "strong-leader pump" positive vocabulary ---
     "turning point", "strong leadership", "decisive leadership",
     "clear direction", "real results", "restores confidence",
@@ -277,11 +287,18 @@ FRAMING_WORDS = [
     # (only phrases that are genuinely rare in neutral journalism)
     "may be overstated", "are overstated", "is overstated",
     "concerns may be overstated", "fears are overstated",
+    "not uncommon", "is not uncommon", "are not uncommon",
+    "not without discussion", "not without debate",
+    "not without controversy", "not without criticism",
     "often produced", "have often produced",
+    "transitional challenges", "teething issues",
+    "long-standing structural",
+    "positioned as", "positioning the country",
+    "broader benefits", "broader pattern",
     # --- "opposition-is-small-and-wrong" soft framings ---
     "small group of detractors", "a small group of detractors",
     "handful of detractors", "vocal minority",
-    "historically opposed",
+    "historically opposed", "have historically opposed",
     "has historically opposed", "long opposed",
     "tends to fade", "fade quickly", "fades quickly",
     "will fade", "fading political class",
@@ -394,7 +411,7 @@ HALF_SENSATIONAL    = 10.0   # per 1000 words (was 12 - tuned for soft hype)
 HALF_ABSOLUTE       =  7.0   # was 8 - softer assertions deserve credit
 HALF_FRAMING        = 10.0   # was 12 - modern propaganda leans on soft framings
 HALF_SLANT          = 18.0
-HALF_WEASEL         =  8.0   # raised from 5 - list is much larger now; need higher density to score
+HALF_WEASEL         =  5.0   # was 6 - weasel is the #1 soft-propaganda tell
 HALF_EXCLAIM        =  5.0
 HALF_CAPS           =  3.0
 HALF_SUPERLATIVE    =  6.0
@@ -636,22 +653,10 @@ def score_sentiment_imbalance(text: str, n_words: int, stats: dict) -> dict:
 
     imbalance = abs(pos - neg) / total
     density = density_per_1000(total, n_words)
-    # Half-point 22: balances two goals:
-    #   - don't crush genuinely one-sided articles (old 30 did that)
-    #   - don't scream bias for a short article with a few mildly
-    #     positive words and no negatives (old 15 did that).
-    # Additionally, we require at least 4 sentiment words total,
-    # otherwise the imbalance ratio is statistical noise.
-    if total < 6:
-        return {
-            "score": 0.0, "found": [], "count": total,
-            "sub": {"positive_hits": pos, "negative_hits": neg,
-                    "imbalance_ratio": round(imbalance, 2),
-                    "sentiment_density": round(density, 2),
-                    "confidence": 0.0,
-                    "note": "too few sentiment words to score"},
-        }
-    conf = smooth_score(density, 28.0) / 100.0   # 0..1  (raised from 22 - less sensitive on short articles)
+    # Half-point 15 (instead of 30): a lopsided article with ~15 sentiment
+    # words / 1000 already deserves a confident imbalance call. The old
+    # value of 30 was crushing genuinely one-sided articles down to ~14.
+    conf = smooth_score(density, 15.0) / 100.0   # 0..1
 
     score = imbalance * conf * 100.0
     found = pos_found if pos >= neg else neg_found
@@ -683,20 +688,13 @@ def score_subjectivity(text: str, n_words: int, stats: dict) -> dict:
     hedge_density = density_per_1000(hedge_count, n_words)
 
     abs_score    = smooth_score(abs_density, HALF_ABSOLUTE)
-    # Cap hedge relief at 15 points. Propaganda stuffs "expected to" /
-    # "likely to" as SOFTENERS around strong claims; they shouldn't
-    # cancel out the absolutes entirely.
+    # Cap hedge relief at 15 points (was 30). Propaganda articles stuff
+    # in "expected to" / "likely to" as SOFTENERS around strong claims;
+    # they shouldn't cancel out the absolutes entirely. A subtler slope
+    # (x2.0 instead of x3.0) lets hedges help, but not dominate.
     hedge_relief = min(15.0, hedge_density * 2.0)
 
-    # Require a minimum signal before declaring subjectivity: one
-    # stray "of course" or "clearly" in a 300-word article is not
-    # enough evidence, and produces annoying MILD BIAS labels on
-    # otherwise neutral wire stories.  We need either 2+ absolute
-    # phrases or a density of at least 3 per 1000 words.
-    if abs_count < 2 and abs_density < 3.0:
-        score = 0.0
-    else:
-        score = max(0.0, abs_score - hedge_relief)
+    score = max(0.0, abs_score - hedge_relief)
 
     return {
         "score": round(score, 1),
@@ -723,7 +721,7 @@ def score_source_opacity(text: str, n_words: int, stats: dict) -> dict:
 
     # A. weasel share
     if total == 0:
-        ratio_score = 20.0   # no citations = factual statements, not suspicious by default
+        ratio_score = 50.0   # no citations at all = mildly suspicious
     else:
         ratio_score = 100.0 * weasel / total
 
@@ -877,28 +875,25 @@ def analyze_article(title: str, body: str) -> dict:
 
     # --- Aggregation -------------------------------------------------
     # A straight mean of 6 axes unfairly punishes articles that bias
-    # only along some dimensions.  For example, Indian political
-    # propaganda may score 0 on Political Slant (tuned for US
-    # left/right vocabulary) even though its framing, sourcing and
-    # sentiment are clearly slanted.  To handle this we blend:
-    #   - the straight mean (so quiet axes still count)
-    #   - the mean of the top 3 axes (so concentrated bias registers)
-    # The blend is 50/50.
-    #
-    # BUT: if only ONE axis fires, we fall back to the straight mean.
-    # A lonely hot axis - e.g. a mildly positive wire story that
-    # trips only Sentiment Imbalance - should NOT be amplified by
-    # the top-3 blend; that would produce false MILD BIAS labels.
+    # only along some dimensions.  For example, a piece of Indian
+    # political propaganda may score 0 on Political Slant (which is
+    # tuned for US left/right vocabulary) even though its framing,
+    # sourcing, and sentiment are clearly slanted.  To avoid this we
+    # blend two signals:
+    #   - the straight mean (so all axes still contribute something)
+    #   - the mean of the 3 highest-scoring axes (so concentrated
+    #     bias actually registers instead of being diluted)
+    # The blend is 50/50.  An article that lights up on ALL six axes
+    # gets roughly the same score as before; an article that lights
+    # up on only 3-4 axes now scores ~15-20 points higher, which is
+    # the correct behaviour for real-world propaganda.
     straight_mean = sum(radar) / len(radar)
-    hot_axes      = sum(1 for v in radar if v >= 30)
-    if hot_axes >= 3:
-        top3_mean = sum(sorted(radar, reverse=True)[:3]) / 3
-        overall   = 0.5 * straight_mean + 0.5 * top3_mean
-    else:
-        overall   = straight_mean
+    top3_mean     = sum(sorted(radar, reverse=True)[:3]) / 3
+    overall       = 0.5 * straight_mean + 0.5 * top3_mean
 
-    # Multi-axis co-fire bonus: when four or more axes each exceed
-    # 30, the article is broadly biased and deserves a nudge.
+    # Small multi-axis co-fire bonus: when four or more axes each
+    # exceed 30, the article is broadly biased and deserves a nudge.
+    hot_axes = sum(1 for v in radar if v >= 30)
     if hot_axes >= 4:
         overall = min(100.0, overall + 5.0)
     if hot_axes >= 5:
@@ -1051,198 +1046,6 @@ def save_session(report: dict):
     ]
     with open(CSV_FILENAME, "a", newline="", encoding="utf-8") as f:
         csv.writer(f).writerow(row)
-
-
-# ==========================================================
-# SECTION 7B: PDF REPORT EXPORT
-# ==========================================================
-# Produces a shareable, one-file record of the analysis: title,
-# verdict, confidence, a radar chart, the clickbait gauge, and the
-# per-axis breakdown with the exact phrases that drove each score.
-
-PDF_BG       = "#ffffff"
-PDF_INK      = "#0f172a"
-PDF_MUTED    = "#64748b"
-PDF_ACCENT   = "#2563eb"
-PDF_DANGER   = "#dc2626"
-PDF_WARN     = "#d97706"
-PDF_GOOD     = "#16a34a"
-
-
-def _pdf_verdict_color(score: float) -> str:
-    if score >= 60: return PDF_DANGER
-    if score >= 30: return PDF_WARN
-    return PDF_GOOD
-
-
-def export_report_pdf(report: dict, path: str) -> None:
-    """Render a one-page, print-ready PDF of the analysis."""
-    verdict_label, verdict_msg = build_verdict(report["overall_score"])
-    lean_msg = describe_lean(report["political_lean"])
-    conf_msg = describe_confidence(report["confidence"])
-
-    with PdfPages(path) as pdf:
-        fig = Figure(figsize=(8.27, 11.69), dpi=120, facecolor=PDF_BG)
-        gs  = fig.add_gridspec(
-            nrows=4, ncols=2,
-            height_ratios=[1.0, 0.55, 1.25, 1.6],
-            hspace=0.55, wspace=0.25,
-            left=0.07, right=0.95, top=0.95, bottom=0.05,
-        )
-
-        # Top-left: verdict card
-        ax_head = fig.add_subplot(gs[0, 0])
-        ax_head.set_axis_off()
-        title = report["title"] or "(no title supplied)"
-        if len(title) > 75:
-            title = title[:72] + "..."
-        ax_head.text(0, 1.00, "BiasLab", fontsize=20, fontweight="bold",
-                     color=PDF_ACCENT, transform=ax_head.transAxes)
-        ax_head.text(0, 0.86, f"Report generated {report['when']}",
-                     fontsize=8, color=PDF_MUTED, transform=ax_head.transAxes)
-        ax_head.text(0, 0.70, title, fontsize=10, color=PDF_INK,
-                     transform=ax_head.transAxes, wrap=True)
-        ax_head.text(0, 0.54,
-                     f"Words: {report['n_words']}    "
-                     f"Confidence: {report['confidence']:.2f} ({conf_msg})",
-                     fontsize=8, color=PDF_MUTED, transform=ax_head.transAxes)
-
-        vcolor = _pdf_verdict_color(report["overall_score"])
-        ax_head.add_patch(mpatches.FancyBboxPatch(
-            (0, 0.0), 1.0, 0.42,
-            boxstyle="round,pad=0.02,rounding_size=0.02",
-            linewidth=0, facecolor=vcolor, alpha=0.12,
-            transform=ax_head.transAxes,
-        ))
-        ax_head.text(0.02, 0.28, f"{report['overall_score']:.0f} / 100",
-                     fontsize=24, fontweight="bold", color=vcolor,
-                     transform=ax_head.transAxes)
-        ax_head.text(0.02, 0.08, verdict_label, fontsize=10,
-                     fontweight="bold", color=vcolor,
-                     transform=ax_head.transAxes)
-        ax_head.text(0.42, 0.14, verdict_msg, fontsize=8,
-                     color=PDF_INK, transform=ax_head.transAxes, wrap=True)
-
-        # Top-right: radar
-        ax_radar = fig.add_subplot(gs[0, 1], polar=True, facecolor=PDF_BG)
-        values = report["radar_values"]
-        labels = report["radar_labels"]
-        n = len(values)
-        angles = [i / float(n) * 2 * pi for i in range(n)]
-        ax_radar.plot(angles + angles[:1], values + values[:1],
-                      color=PDF_ACCENT, linewidth=1.8)
-        ax_radar.fill(angles + angles[:1], values + values[:1],
-                      color=PDF_ACCENT, alpha=0.22)
-        ax_radar.set_xticks(angles)
-        ax_radar.set_xticklabels([l.replace("\n", " ") for l in labels],
-                                 fontsize=7, color=PDF_INK)
-        ax_radar.set_yticks([25, 50, 75])
-        ax_radar.set_yticklabels(["25", "50", "75"], fontsize=6,
-                                 color=PDF_MUTED)
-        ax_radar.set_ylim(0, 100)
-        ax_radar.grid(color=PDF_MUTED, alpha=0.4, linewidth=0.5)
-        ax_radar.set_title("Bias radar", fontsize=10, color=PDF_INK, pad=10)
-
-        # Middle strip: clickbait / lean / confidence
-        ax_strip = fig.add_subplot(gs[1, :])
-        ax_strip.set_axis_off()
-        cb   = report["clickbait_gap"]
-        lean = report["political_lean"]
-        cb_color = PDF_DANGER if cb >= 60 else PDF_WARN if cb >= 40 else PDF_GOOD
-        strip = [
-            ("CLICKBAIT GAP",  f"{cb:.0f} / 100", cb_color,
-             f"title {report['title_drama']} vs body {report['body_drama']}"),
-            ("POLITICAL LEAN", f"{lean:+.2f}",    PDF_ACCENT, lean_msg),
-            ("CONFIDENCE",     f"{report['confidence']:.2f}", PDF_ACCENT, conf_msg),
-        ]
-        for i, (label, value, color, subtext) in enumerate(strip):
-            x = i / 3.0
-            ax_strip.add_patch(mpatches.FancyBboxPatch(
-                (x + 0.01, 0.05), 0.31, 0.90,
-                boxstyle="round,pad=0.01,rounding_size=0.02",
-                linewidth=0.8, edgecolor=PDF_MUTED, facecolor="#f8fafc",
-                transform=ax_strip.transAxes,
-            ))
-            ax_strip.text(x + 0.02, 0.72, label, fontsize=7,
-                          color=PDF_MUTED, fontweight="bold",
-                          transform=ax_strip.transAxes)
-            ax_strip.text(x + 0.02, 0.40, value, fontsize=14,
-                          color=color, fontweight="bold",
-                          transform=ax_strip.transAxes)
-            ax_strip.text(x + 0.02, 0.14, subtext, fontsize=7,
-                          color=PDF_INK, transform=ax_strip.transAxes)
-
-        # Per-axis bars
-        ax_bars = fig.add_subplot(gs[2, :])
-        ax_bars.set_facecolor(PDF_BG)
-        axis_names  = list(report["details"].keys())
-        axis_scores = [report["details"][a]["score"] for a in axis_names]
-        bar_colors  = [_pdf_verdict_color(s) for s in axis_scores]
-        y = list(range(len(axis_names)))[::-1]
-        ax_bars.barh(y, axis_scores, color=bar_colors, alpha=0.85,
-                     edgecolor="none", height=0.6)
-        ax_bars.set_yticks(y)
-        ax_bars.set_yticklabels(axis_names, fontsize=9, color=PDF_INK)
-        ax_bars.set_xlim(0, 100)
-        ax_bars.set_xticks([0, 25, 50, 75, 100])
-        ax_bars.tick_params(colors=PDF_MUTED, labelsize=7)
-        for spine in ("top", "right", "left"):
-            ax_bars.spines[spine].set_visible(False)
-        ax_bars.spines["bottom"].set_color(PDF_MUTED)
-        ax_bars.set_title("Per-axis scores", fontsize=10, color=PDF_INK,
-                          loc="left", pad=8)
-        for i, score in enumerate(axis_scores):
-            ax_bars.text(min(score + 1.5, 96), y[i],
-                         f"{score:.0f}", fontsize=8,
-                         color=bar_colors[i], va="center",
-                         fontweight="bold")
-
-        # Flagged phrases
-        ax_flag = fig.add_subplot(gs[3, :])
-        ax_flag.set_axis_off()
-        ax_flag.text(0, 1.00, "FLAGGED PHRASES BY AXIS", fontsize=9,
-                     color=PDF_MUTED, fontweight="bold",
-                     transform=ax_flag.transAxes)
-        lines = []
-        for axis_name, info in report["details"].items():
-            if info["found"]:
-                seen, deduped = set(), []
-                for p in info["found"]:
-                    if p not in seen:
-                        seen.add(p); deduped.append(p)
-                top = deduped[:10]
-                lines.append(
-                    f"{axis_name} ({info['count']} hits): "
-                    + ", ".join(top)
-                )
-        if not lines:
-            lines = ["No loaded or slanted vocabulary detected."]
-        y_cursor = 0.92
-        for ln in lines:
-            chunks, cur = [], ""
-            for word in ln.split(" "):
-                if len(cur) + len(word) + 1 > 95:
-                    chunks.append(cur); cur = word
-                else:
-                    cur = word if not cur else (cur + " " + word)
-            if cur:
-                chunks.append(cur)
-            for c in chunks:
-                ax_flag.text(0, y_cursor, c, fontsize=8, color=PDF_INK,
-                             transform=ax_flag.transAxes)
-                y_cursor -= 0.05
-                if y_cursor < 0.04:
-                    break
-            y_cursor -= 0.015
-            if y_cursor < 0.04:
-                break
-
-        fig.text(0.5, 0.015,
-                 f"BiasLab v{APP_VERSION}  -  analysis is illustrative; "
-                 f"always verify facts independently.",
-                 ha="center", fontsize=7, color=PDF_MUTED)
-        pdf.savefig(fig, facecolor=PDF_BG)
-
 
 
 # ==========================================================
@@ -1400,31 +1203,17 @@ class BiasLabApp:
         btn_row = tk.Frame(panel, bg=self.COLOR_PANEL)
         btn_row.pack(fill="x", padx=14, pady=(0, 14))
 
-        self.btn_analyze = ttk.Button(
-            btn_row, text="Analyze", style="Accent.TButton",
-            command=self.on_analyze,
-        )
-        self.btn_analyze.pack(side="left")
-
+        ttk.Button(btn_row, text="Analyze",     style="Accent.TButton",
+                   command=self.on_analyze).pack(side="left")
         ttk.Button(btn_row, text="Load Sample", style="Ghost.TButton",
                    command=self.on_load_sample).pack(side="left", padx=6)
         ttk.Button(btn_row, text="Clear",       style="Ghost.TButton",
                    command=self.on_clear).pack(side="left")
-
-        self.btn_export_pdf = ttk.Button(
-            btn_row, text="Export PDF", style="Ghost.TButton",
-            command=self.on_export_pdf, state="disabled",
-        )
-        self.btn_export_pdf.pack(side="right")
-
-        self.btn_save_csv = ttk.Button(
-            btn_row, text="Save to CSV", style="Ghost.TButton",
-            command=self.on_save, state="disabled",
-        )
-        self.btn_save_csv.pack(side="right", padx=6)
+        ttk.Button(btn_row, text="Save to CSV", style="Ghost.TButton",
+                   command=self.on_save).pack(side="right")
 
     def _build_results_panel(self, parent):
-        """Right column: notebook with Summary / Radar / Details / Flagged / Tips."""
+        """Right column: notebook with Overview / Radar / Flagged / Tips."""
         panel = tk.Frame(parent, bg=self.COLOR_PANEL)
         panel.grid(row=0, column=1, sticky="nsew", padx=(8, 0))
 
@@ -1435,28 +1224,20 @@ class BiasLabApp:
         ).pack(anchor="w", padx=14, pady=(14, 4))
 
         self.tabs = ttk.Notebook(panel)
-        self.tabs.pack(fill="both", expand=True, padx=10, pady=(4, 4))
+        self.tabs.pack(fill="both", expand=True, padx=10, pady=(4, 14))
 
-        # --- Summary tab (dashboard) --------------------------
-        self.tab_summary = tk.Frame(self.tabs, bg=self.COLOR_PANEL)
-        self.tabs.add(self.tab_summary, text="Summary")
-
-        # --- Radar tab ----------------------------------------
-        self.tab_radar = tk.Frame(self.tabs, bg=self.COLOR_PANEL)
-        self.tabs.add(self.tab_radar, text="Radar")
-        self.radar_canvas = None
-
-        # --- Details tab (axis breakdown) ---------------------
+        # --- Overview tab -------------------------------------
         self.tab_overview = tk.Frame(self.tabs, bg=self.COLOR_PANEL)
-        self.tabs.add(self.tab_overview, text="Details")
+        self.tabs.add(self.tab_overview, text="Overview")
 
-        self.overview_text = scrolledtext.ScrolledText(
+        self.overview_text = tk.Text(
             self.tab_overview, wrap="word",
             font=("Consolas", 10),
             bg=self.COLOR_PANEL_2, fg=self.COLOR_TEXT,
             relief="flat", padx=10, pady=10,
         )
         self.overview_text.pack(fill="both", expand=True, padx=8, pady=8)
+        # colour tags for nicer overview styling
         self.overview_text.tag_configure("header", foreground=self.COLOR_ACCENT,
                                          font=("Consolas", 11, "bold"))
         self.overview_text.tag_configure("warn",   foreground=self.COLOR_WARN)
@@ -1465,27 +1246,29 @@ class BiasLabApp:
         self.overview_text.tag_configure("muted",  foreground=self.COLOR_MUTED)
         self.overview_text.configure(state="disabled")
 
-        # --- Flagged phrases tab ------------------------------
-        self.tab_flagged = tk.Frame(self.tabs, bg=self.COLOR_PANEL)
-        self.tabs.add(self.tab_flagged, text="Flagged Phrases")
+        # --- Radar tab ----------------------------------------
+        self.tab_radar = tk.Frame(self.tabs, bg=self.COLOR_PANEL)
+        self.tabs.add(self.tab_radar, text="Radar Chart")
+        self.radar_canvas = None
 
-        self.flagged_text = scrolledtext.ScrolledText(
+        # --- Flagged words tab --------------------------------
+        self.tab_flagged = tk.Frame(self.tabs, bg=self.COLOR_PANEL)
+        self.tabs.add(self.tab_flagged, text="Flagged Words")
+
+        self.flagged_text = tk.Text(
             self.tab_flagged, wrap="word",
             font=("Consolas", 10),
             bg=self.COLOR_PANEL_2, fg=self.COLOR_TEXT,
             relief="flat", padx=10, pady=10,
         )
         self.flagged_text.pack(fill="both", expand=True, padx=8, pady=8)
-        self.flagged_text.tag_configure("axis", foreground=self.COLOR_ACCENT,
-                                        font=("Consolas", 10, "bold"))
-        self.flagged_text.tag_configure("muted", foreground=self.COLOR_MUTED)
         self.flagged_text.configure(state="disabled")
 
         # --- Suggestions tab ----------------------------------
         self.tab_tips = tk.Frame(self.tabs, bg=self.COLOR_PANEL)
         self.tabs.add(self.tab_tips, text="Suggestions")
 
-        self.tips_text = scrolledtext.ScrolledText(
+        self.tips_text = tk.Text(
             self.tab_tips, wrap="word",
             font=("Segoe UI", 11),
             bg=self.COLOR_PANEL_2, fg=self.COLOR_TEXT,
@@ -1494,56 +1277,22 @@ class BiasLabApp:
         self.tips_text.pack(fill="both", expand=True, padx=8, pady=8)
         self.tips_text.configure(state="disabled")
 
-        # --- Status bar ---------------------------------------
-        self.status_var = tk.StringVar(value="Ready.")
-        status_bar = tk.Label(
-            panel, textvariable=self.status_var,
-            font=("Segoe UI", 9),
-            fg=self.COLOR_MUTED, bg=self.COLOR_PANEL,
-            anchor="w",
-        )
-        status_bar.pack(fill="x", padx=14, pady=(4, 10))
-
         self._show_placeholder()
 
     def _show_placeholder(self):
         """Friendly hints before the user has clicked Analyze."""
-        for w in self.tab_summary.winfo_children():
-            w.destroy()
-        holder = tk.Frame(self.tab_summary, bg=self.COLOR_PANEL)
-        holder.pack(fill="both", expand=True, padx=20, pady=40)
-
-        tk.Label(
-            holder, text="Paste an article, then click Analyze.",
-            font=("Segoe UI", 14, "bold"),
-            fg=self.COLOR_TEXT, bg=self.COLOR_PANEL,
-        ).pack(anchor="w", pady=(0, 12))
-
-        bullets = [
-            "Scores the text on six bias dimensions",
-            "Draws a radar chart of all axes",
-            "Highlights the phrases that swayed the score",
-            "Flags clickbait headlines vs. body drama",
-            "Reports how confident the analysis is",
-            "Suggests concrete rewriting tips",
-            "Exports a full shareable PDF report",
-        ]
-        for b in bullets:
-            tk.Label(
-                holder, text=f"  -  {b}",
-                font=("Segoe UI", 11),
-                fg=self.COLOR_MUTED, bg=self.COLOR_PANEL,
-                anchor="w", justify="left",
-            ).pack(anchor="w", pady=1)
-
-        tk.Label(
-            holder, text="\nTip: hit Load Sample for an instant demo.",
-            font=("Segoe UI", 10, "italic"),
-            fg=self.COLOR_ACCENT, bg=self.COLOR_PANEL,
-        ).pack(anchor="w", pady=(12, 0))
-
-        self._write_plain(self.overview_text,
-                          "Run an analysis to see the full breakdown.")
+        placeholder = (
+            "Paste an article on the left, then click  Analyze.\n\n"
+            "BiasLab will:\n"
+            "  * score the text on six bias dimensions\n"
+            "  * draw a radar chart\n"
+            "  * highlight the exact phrases that swayed the score\n"
+            "  * flag clickbait headlines\n"
+            "  * report how confident the analysis is\n"
+            "  * give concrete rewriting tips\n\n"
+            "Tip: hit  Load Sample  for an instant demo."
+        )
+        self._write_plain(self.overview_text, placeholder)
         self._write_plain(self.flagged_text, "No analysis yet.")
         self._write_plain(self.tips_text,
                           "Suggestions appear after you analyze an article.")
@@ -1564,30 +1313,9 @@ class BiasLabApp:
             )
             return
 
-        self.btn_analyze.configure(state="disabled")
-        self.status_var.set("Analyzing article...")
-        self.root.update_idletasks()
-        try:
-            report = analyze_article(title, body)
-            self.current_report = report
-            self._show_results(report)
-            self.status_var.set(
-                f"Done. Overall: {report['overall_score']} / 100  -  "
-                f"{build_verdict(report['overall_score'])[0]}"
-            )
-            self.btn_save_csv.configure(state="normal")
-            self.btn_export_pdf.configure(state="normal")
-            self.tabs.select(self.tab_summary)
-        except Exception as exc:  # noqa: BLE001
-            traceback.print_exc()
-            self.status_var.set("Analysis failed - see error dialog.")
-            messagebox.showerror(
-                "Analysis failed",
-                "Something went wrong running the analyzer:\n\n"
-                f"{exc}\n\nFull traceback is in the console."
-            )
-        finally:
-            self.btn_analyze.configure(state="normal")
+        report = analyze_article(title, body)
+        self.current_report = report
+        self._show_results(report)
 
     def on_load_sample(self):
         """Fill inputs with the built-in biased sample article."""
@@ -1595,7 +1323,6 @@ class BiasLabApp:
         self.title_entry.insert(0, SAMPLE_TITLE)
         self.body_text.delete("1.0", "end")
         self.body_text.insert("1.0", SAMPLE_BODY)
-        self.status_var.set("Sample article loaded. Click Analyze to run it.")
 
     def on_clear(self):
         """Reset everything."""
@@ -1606,55 +1333,17 @@ class BiasLabApp:
         for w in self.tab_radar.winfo_children():
             w.destroy()
         self.radar_canvas = None
-        self.btn_save_csv.configure(state="disabled")
-        self.btn_export_pdf.configure(state="disabled")
-        self.status_var.set("Ready.")
 
     def on_save(self):
         """Persist the most-recent analysis to CSV."""
         if self.current_report is None:
             messagebox.showinfo("Nothing to save", "Run an analysis first.")
             return
-        try:
-            save_session(self.current_report)
-            self.status_var.set(f"Saved to {CSV_FILENAME}")
-            messagebox.showinfo("Saved",
-                                f"Analysis appended to {CSV_FILENAME}")
-        except OSError as exc:
-            messagebox.showerror(
-                "Could not save CSV",
-                f"Failed to write to {CSV_FILENAME}:\n\n{exc}"
-            )
-
-    def on_export_pdf(self):
-        """Save the most-recent analysis as a one-page PDF."""
-        if self.current_report is None:
-            messagebox.showinfo("Nothing to export", "Run an analysis first.")
-            return
-        default_name = "biaslab_report.pdf"
-        raw_title = self.current_report.get("title") or ""
-        if raw_title:
-            safe = re.sub(r"[^A-Za-z0-9_\-]+", "_", raw_title)[:40].strip("_")
-            if safe:
-                default_name = f"biaslab_{safe}.pdf"
-        path = filedialog.asksaveasfilename(
-            title="Export BiasLab report as PDF",
-            defaultextension=".pdf",
-            initialfile=default_name,
-            filetypes=[("PDF document", "*.pdf"), ("All files", "*.*")],
+        save_session(self.current_report)
+        messagebox.showinfo(
+            "Saved",
+            f"Analysis appended to {CSV_FILENAME}",
         )
-        if not path:
-            return
-        try:
-            export_report_pdf(self.current_report, path)
-            self.status_var.set(f"Exported PDF: {os.path.basename(path)}")
-            messagebox.showinfo("Exported", f"Report saved to:\n{path}")
-        except Exception as exc:  # noqa: BLE001
-            traceback.print_exc()
-            messagebox.showerror(
-                "Could not export PDF",
-                f"Failed to write PDF:\n\n{exc}"
-            )
 
     # ==========================================================
     # RENDERING HELPERS
@@ -1674,169 +1363,10 @@ class BiasLabApp:
 
     def _show_results(self, report: dict):
         """Render the full report into every tab."""
-        self._render_summary(report)
         self._render_overview(report)
         self._render_flagged(report)
         self._render_tips(report)
         self._draw_radar(report["radar_values"], report["radar_labels"])
-
-    # ---------------------------------------------------------------
-    # Summary tab (dashboard of cards)
-    # ---------------------------------------------------------------
-
-    def _verdict_color(self, score: float) -> str:
-        if score >= 60: return self.COLOR_DANGER
-        if score >= 30: return self.COLOR_WARN
-        return self.COLOR_GOOD
-
-    def _render_summary(self, report: dict):
-        """Draw the Summary tab as a grid of coloured cards."""
-        for w in self.tab_summary.winfo_children():
-            w.destroy()
-
-        outer = tk.Frame(self.tab_summary, bg=self.COLOR_PANEL)
-        outer.pack(fill="both", expand=True, padx=12, pady=12)
-
-        vcolor = self._verdict_color(report["overall_score"])
-        verdict_label, verdict_msg = build_verdict(report["overall_score"])
-
-        verdict_card = tk.Frame(outer, bg=self.COLOR_PANEL_2,
-                                highlightbackground=vcolor,
-                                highlightthickness=2, bd=0)
-        verdict_card.pack(fill="x", pady=(0, 12))
-        inner = tk.Frame(verdict_card, bg=self.COLOR_PANEL_2)
-        inner.pack(fill="x", padx=16, pady=14)
-
-        tk.Label(inner, text="OVERALL BIAS SCORE",
-                 font=("Segoe UI", 9, "bold"),
-                 fg=self.COLOR_MUTED, bg=self.COLOR_PANEL_2,
-                 anchor="w").pack(anchor="w")
-        row1 = tk.Frame(inner, bg=self.COLOR_PANEL_2)
-        row1.pack(fill="x", pady=(2, 0))
-        tk.Label(row1, text=f"{report['overall_score']:.0f}",
-                 font=("Segoe UI", 36, "bold"),
-                 fg=vcolor, bg=self.COLOR_PANEL_2).pack(side="left")
-        tk.Label(row1, text=" / 100",
-                 font=("Segoe UI", 14),
-                 fg=self.COLOR_MUTED, bg=self.COLOR_PANEL_2).pack(
-                     side="left", pady=(18, 0))
-        tk.Label(row1, text=f"  {verdict_label}",
-                 font=("Segoe UI", 14, "bold"),
-                 fg=vcolor, bg=self.COLOR_PANEL_2).pack(
-                     side="left", pady=(18, 0), padx=(12, 0))
-        tk.Label(inner, text=verdict_msg,
-                 font=("Segoe UI", 10),
-                 fg=self.COLOR_TEXT, bg=self.COLOR_PANEL_2,
-                 anchor="w", justify="left", wraplength=520).pack(
-                     anchor="w", pady=(4, 0))
-
-        # Metric strip
-        strip = tk.Frame(outer, bg=self.COLOR_PANEL)
-        strip.pack(fill="x", pady=(0, 12))
-        for i in range(3):
-            strip.grid_columnconfigure(i, weight=1, uniform="mcard")
-
-        cb = report["clickbait_gap"]
-        cb_color = (self.COLOR_DANGER if cb >= 60
-                    else self.COLOR_WARN if cb >= 40
-                    else self.COLOR_GOOD)
-        cb_sub = (f"title {report['title_drama']} vs "
-                  f"body {report['body_drama']}")
-        self._metric_card(strip, 0, "CLICKBAIT GAP",
-                          f"{cb:.0f} / 100", cb_color, cb_sub)
-
-        lean = report["political_lean"]
-        if lean <= -0.2:
-            arrow, lcolor = "<--", self.COLOR_ACCENT
-        elif lean >= 0.2:
-            arrow, lcolor = "-->", self.COLOR_ACCENT_2
-        else:
-            arrow, lcolor = "|", self.COLOR_GOOD
-        self._metric_card(strip, 1, "POLITICAL LEAN",
-                          f"{arrow}  {lean:+.2f}", lcolor,
-                          describe_lean(lean))
-
-        conf = report["confidence"]
-        conf_color = (self.COLOR_GOOD if conf >= 0.6
-                      else self.COLOR_WARN if conf >= 0.3
-                      else self.COLOR_DANGER)
-        self._metric_card(strip, 2, "CONFIDENCE",
-                          f"{conf:.2f}", conf_color,
-                          describe_confidence(conf))
-
-        # Per-axis bars
-        axes_card = tk.Frame(outer, bg=self.COLOR_PANEL_2)
-        axes_card.pack(fill="both", expand=True)
-        tk.Label(axes_card, text="AXIS BREAKDOWN",
-                 font=("Segoe UI", 9, "bold"),
-                 fg=self.COLOR_MUTED, bg=self.COLOR_PANEL_2,
-                 anchor="w").pack(anchor="w", padx=16, pady=(12, 6))
-
-        for axis_name, info in report["details"].items():
-            self._axis_bar(axes_card, axis_name, info["score"],
-                           info.get("count", 0))
-
-        footer = tk.Frame(outer, bg=self.COLOR_PANEL)
-        footer.pack(fill="x", pady=(10, 0))
-        tk.Label(
-            footer,
-            text=(f"{report['n_words']} words  -  "
-                  f"{report['stats']['paragraphs']} paragraphs  -  "
-                  f"{report['stats']['quoted_segments']} quoted segments  -  "
-                  f"analyzed {report['when']}"),
-            font=("Segoe UI", 9),
-            fg=self.COLOR_MUTED, bg=self.COLOR_PANEL,
-            anchor="w",
-        ).pack(anchor="w")
-
-    def _metric_card(self, parent, col: int, label: str,
-                     value: str, value_color: str, subtext: str):
-        card = tk.Frame(parent, bg=self.COLOR_PANEL_2)
-        card.grid(row=0, column=col, sticky="nsew",
-                  padx=(0 if col == 0 else 6, 0 if col == 2 else 6))
-        tk.Label(card, text=label,
-                 font=("Segoe UI", 8, "bold"),
-                 fg=self.COLOR_MUTED, bg=self.COLOR_PANEL_2,
-                 anchor="w").pack(anchor="w", padx=12, pady=(10, 0))
-        tk.Label(card, text=value,
-                 font=("Segoe UI", 20, "bold"),
-                 fg=value_color, bg=self.COLOR_PANEL_2,
-                 anchor="w").pack(anchor="w", padx=12)
-        tk.Label(card, text=subtext,
-                 font=("Segoe UI", 9),
-                 fg=self.COLOR_TEXT, bg=self.COLOR_PANEL_2,
-                 anchor="w", wraplength=220, justify="left").pack(
-                     anchor="w", padx=12, pady=(0, 10))
-
-    def _axis_bar(self, parent, name: str, score: float, hits: int):
-        row = tk.Frame(parent, bg=self.COLOR_PANEL_2)
-        row.pack(fill="x", padx=16, pady=3)
-
-        tk.Label(row, text=name,
-                 font=("Segoe UI", 10),
-                 fg=self.COLOR_TEXT, bg=self.COLOR_PANEL_2,
-                 width=22, anchor="w").pack(side="left")
-
-        bar_w, bar_h = 240, 14
-        canv = tk.Canvas(row, width=bar_w, height=bar_h,
-                         bg=self.COLOR_PANEL, highlightthickness=0)
-        canv.pack(side="left", padx=(6, 10))
-        fill_w = int((max(0.0, min(100.0, score)) / 100.0) * bar_w)
-        color = self._verdict_color(score)
-        canv.create_rectangle(0, 0, bar_w, bar_h,
-                              fill=self.COLOR_BG, outline="")
-        if fill_w > 0:
-            canv.create_rectangle(0, 0, fill_w, bar_h,
-                                  fill=color, outline="")
-
-        tk.Label(row, text=f"{score:>5.1f}",
-                 font=("Consolas", 10, "bold"),
-                 fg=color, bg=self.COLOR_PANEL_2,
-                 width=6).pack(side="left")
-        tk.Label(row, text=f"{hits} hits",
-                 font=("Segoe UI", 9),
-                 fg=self.COLOR_MUTED, bg=self.COLOR_PANEL_2,
-                 anchor="w").pack(side="left", padx=(6, 0))
 
     def _render_overview(self, report: dict):
         """Fill the big Overview tab with a pretty text dump."""
@@ -1891,28 +1421,16 @@ class BiasLabApp:
         w.configure(state="disabled")
 
     def _render_flagged(self, report: dict):
-        """List the phrases that triggered each axis, with colour tags."""
-        w = self.flagged_text
-        w.configure(state="normal")
-        w.delete("1.0", "end")
-
-        any_hits = False
+        """List the phrases that triggered each axis."""
+        lines = []
         for axis_name, info in report["details"].items():
             if info["found"]:
-                any_hits = True
-                w.insert("end",
-                         f"{axis_name}  ({info['count']} hits)\n",
-                         "axis")
-                seen, phrases = set(), []
-                for p in info["found"]:
-                    if p not in seen:
-                        seen.add(p); phrases.append(p)
-                w.insert("end", "    " + ", ".join(phrases) + "\n\n",
-                         "muted")
-        if not any_hits:
-            w.insert("end",
-                     "No loaded or slanted vocabulary was detected. Nice.")
-        w.configure(state="disabled")
+                lines.append(f"{axis_name}  ({info['count']} hits):")
+                lines.append("    " + ", ".join(info["found"]))
+                lines.append("")
+        if not lines:
+            lines = ["No loaded or slanted vocabulary was detected. Nice."]
+        self._write_plain(self.flagged_text, "\n".join(lines))
 
     def _render_tips(self, report: dict):
         """List the suggestions."""
