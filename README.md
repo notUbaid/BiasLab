@@ -12,7 +12,7 @@ ____  _           _          _
 
 ### Context-Aware News Analysis System.
 
-Paste an article, get a six-axis **Bias Radar**, sentence-level evidence summaries, PDF reporting, and uncertainty tracking. BiasLab v3 transcends simple word counting by analyzing sentences in context — properly ignoring quoted speech and accounting for negations to eliminate false positives. Runs 100% locally.
+Paste an article, get a six-axis **Bias Radar**, sentence-level evidence summarieses, PDF reporting, and uncertainty tracking. BiasLab v3 transcends simple word counting by analyzing sentences in context — properly ignoring quoted speech and accounting for negations to eliminate false positives. Runs 100% locally.
 
 ![Python](https://img.shields.io/badge/Python-3.8%2B-3776AB?style=for-the-badge&logo=python&logoColor=white)
 ![Tkinter](https://img.shields.io/badge/GUI-Tkinter-FFC107?style=for-the-badge)
